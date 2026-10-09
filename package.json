@@ -3,6 +3,14 @@
   "private": true,
   "version": "1.0.0",
   "description": "SifuTrader: client-side financial charting and backtesting single page application.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ale-gaudenzi/SifuTrader.git"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

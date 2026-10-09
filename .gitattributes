@@ -1,0 +1,15 @@
+# Normalize line endings to LF in the repository
+* text=auto eol=lf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+
+# Generated files: collapse in diffs
+package-lock.json linguist-generated=true -diff
