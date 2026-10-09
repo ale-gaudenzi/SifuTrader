@@ -56,6 +56,12 @@ export function formatVolume(value: number): string {
   return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
 }
 
+/** Valuation multiple such as a P/E: `24.3x`. */
+export function formatMultiple(value: number): string {
+  if (!Number.isFinite(value)) return '-';
+  return `${value.toFixed(1)}x`;
+}
+
 /** Tailwind text color class for a signed quantity. */
 export function signClass(value: number): string {
   if (value > 0) return 'text-up';

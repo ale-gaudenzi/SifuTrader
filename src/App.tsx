@@ -2,7 +2,7 @@
  * Application shell: wires the data layer, chart, strategy configuration and
  * backtest results together. All computation happens in the browser.
  */
-import { useCallback, useDeferredValue, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useDeferredValue, useMemo, useState } from 'react';
 import Chart, { type OverlayState } from './components/Chart';
 import DataInput from './components/DataInput';
 import EquityChart from './components/EquityChart';
@@ -14,11 +14,15 @@ import type { Dataset } from './data/providers';
 import { BacktestError, DEFAULT_CONFIG, runBacktest } from './engine/backtester';
 import { resample } from './engine/indicators';
 import type { BacktestConfig, BacktestResult, ParamValues, Timeframe } from './engine/types';
+import { useHashView } from './hooks/useHashView';
 import { isOneOf, usePersistentState } from './hooks/usePersistentState';
 import { formatDate, isoDate } from './format';
 import { LANGS, useI18n } from './i18n';
 import { STRATEGIES, getStrategy } from './strategies';
 import { defaultParams } from './strategies/base';
+
+// Split into its own chunk: the backtester never pays for the fundamentals page.
+const FundamentalsPage = lazy(() => import('./components/fundamentals/FundamentalsPage'));
 
 const DEFAULT_OVERLAYS: OverlayState = { sma20: true, sma50: true, ema: false, bollinger: false, markers: true };
 
@@ -43,6 +47,7 @@ export default function App() {
   const i18n = useI18n();
   const { t, locale } = i18n;
   const [dataset, setDataset] = useState<Dataset | null>(null);
+  const [view, setView] = useHashView();
   const [timeframe, setTimeframe] = usePersistentState<Timeframe>('chart.timeframe', '1D', isOneOf(['1D', '1W', '1M'] as const));
   const [overlays, setOverlays] = usePersistentState<OverlayState>('chart.overlays', DEFAULT_OVERLAYS, isOverlayState);
   const [emaPeriod, setEmaPeriod] = usePersistentState('chart.emaPeriod', 21, isEmaPeriod);
@@ -110,7 +115,7 @@ export default function App() {
     <div className="flex min-h-screen flex-col lg:h-screen">
       <header className="flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-terminal-border bg-terminal-panel px-4 py-2.5">
         <Logo />
-        {dataset && first && last && (
+        {view === 'backtest' && dataset && first && last && (
           <div className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 font-mono text-[11px] text-terminal-muted">
             <span className="text-terminal-text">
               {dataset.symbol}
@@ -124,6 +129,13 @@ export default function App() {
           </div>
         )}
         <div className="ml-auto flex items-center gap-3">
+          <div className="seg" role="group" aria-label={t('view.aria')}>
+            {(['backtest', 'fundamentals'] as const).map((v) => (
+              <button key={v} type="button" aria-pressed={v === view} onClick={() => setView(v)}>
+                {t(v === 'backtest' ? 'view.backtest' : 'view.fundamentals')}
+              </button>
+            ))}
+          </div>
           <span className="hidden text-[11px] text-terminal-faint md:inline">{t('app.privacy')}</span>
           <div className="seg" role="group" aria-label={t('app.language')}>
             {LANGS.map((l) => (
@@ -135,8 +147,9 @@ export default function App() {
         </div>
       </header>
 
-      {/* On wide screens the sidebar and the results scroll independently, like two columns. */}
-      <div className="grid flex-1 grid-cols-1 gap-3 p-3 lg:min-h-0 lg:grid-cols-[320px_minmax(0,1fr)]">
+      {/* On wide screens the sidebar and the results scroll independently, like two columns.
+          The backtest view stays mounted while hidden so its data and chart state survive a view switch. */}
+      <div className={`${view === 'backtest' ? 'grid' : 'hidden'} flex-1 grid-cols-1 gap-3 p-3 lg:min-h-0 lg:grid-cols-[320px_minmax(0,1fr)]`}>
         <aside className="space-y-3 lg:min-h-0 lg:overflow-y-auto">
           <DataInput onDataset={setDataset} activeSymbol={dataset?.symbol ?? null} initialSample="AAPL" />
           <StrategyPanel
@@ -184,6 +197,14 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {view === 'fundamentals' && (
+        <main className="flex-1 p-3 lg:min-h-0 lg:overflow-y-auto">
+          <Suspense fallback={<div className="panel p-6 text-center text-sm text-terminal-faint">{t('fund.loading')}</div>}>
+            <FundamentalsPage preferredSymbol={dataset?.symbol ?? null} />
+          </Suspense>
+        </main>
+      )}
 
       <footer className="border-t border-terminal-border px-4 py-2 text-[11px] text-terminal-faint">
         {t('app.disclaimer')}

@@ -6,8 +6,9 @@ dist/
 dist-ssr/
 *.local
 
-# Generated history snapshot (rebuilt by `npm run history` and in CI)
+# Generated snapshots (rebuilt by `npm run history` / `npm run fundamentals` and in CI)
 public/history/
+public/fundamentals/
 
 # TypeScript / Vite / Vitest caches
 *.tsbuildinfo

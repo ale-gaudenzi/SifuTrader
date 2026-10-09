@@ -26,6 +26,11 @@ Built with React 19, TypeScript, Vite, Tailwind CSS 4, [Lightweight Charts](http
 - Equity curve against buy and hold with a drawdown pane; sortable, paginated trade log with CSV export.
 - Results recompute on every change of data, timeframe or parameters.
 
+**Fundamentals** (separate view, `Fundamentals` in the header or `#fundamentals` in the URL)
+- For the watchlist stocks: daily market cap and enterprise value, and the history of P/E, EV/EBITDA, P/S, P/B, dividend yield and FCF yield.
+- Revenue, gross profit, operating income, EBITDA, net income, free cash flow and EPS by fiscal year or quarter, plus a table of the annual statements with margins and debt/equity.
+- Loaded on demand as a separate chunk; the backtester is unchanged.
+
 **Interface**
 - English and Italian UI (EN / IT toggle). The choice is saved; the first visit follows the browser language.
 
@@ -40,6 +45,7 @@ npm test           # unit tests (Vitest)
 npm run build      # type-check and build into dist/
 npm run preview    # serve dist/ locally
 npm run history    # download the watchlist snapshot into public/history/ (needed to fetch Yahoo symbols locally)
+npm run fundamentals  # download the fundamentals snapshot into public/fundamentals/ (needed for the Fundamentals view locally)
 ```
 
 ## Project structure
@@ -48,14 +54,17 @@ npm run history    # download the watchlist snapshot into public/history/ (neede
 .github/workflows/deploy.yml   Test, build and deploy to GitHub Pages
 data/watchlist.json            Symbols included in the history snapshot
 scripts/build-history.mjs      Downloads the history snapshot (server-side)
+scripts/build-fundamentals.mjs Downloads the fundamentals snapshot (server-side)
 public/sample_data/            Bundled OHLCV CSV files and their index.json
 public/history/                Generated history snapshot (git-ignored)
+public/fundamentals/           Generated fundamentals snapshot (git-ignored)
 src/
   engine/                      Domain types, backtester, indicators, metrics (pure TS)
   strategies/                  BaseStrategy, strategy implementations, registry
-  data/                        CSV parsing, data providers
+  data/                        CSV parsing, data providers, fundamentals and valuation
   components/                  Charts, data input, strategy panel, metrics, trade log
-  hooks/                       localStorage preferences
+  components/fundamentals/     Fundamentals view
+  hooks/                       localStorage preferences, URL-fragment view
   i18n.tsx                     English / Italian strings and language provider
   App.tsx, main.tsx
 ```
@@ -182,6 +191,7 @@ Only sources that work from a static site, with no proxy, key or local storage:
 1. **Site snapshot (Yahoo Finance).** Yahoo sends no CORS headers, so the browser cannot call it. Instead, `scripts/build-history.mjs` downloads the full daily history of every symbol in `data/watchlist.json` server-side, during the GitHub Actions deploy (on every push and every weekday at 22:30 UTC), and publishes it as static JSON under `history/`. The browser reads it same-origin. To add a symbol, add its Yahoo ticker to the list and push. Locally, run `npm run history` once to populate `public/history/`.
 2. **Binance** (`data-api.binance.vision`): public, keyless and CORS-enabled, so any listed crypto pair (`BTC-USD`, `DOGE-USD`, `ETHBTC`, ...) is fetched live. History starts in 2017.
 3. **Bundled samples**: if the selected sources fail, the bundled sample for the symbol is shown with a notice.
+4. **Fundamentals snapshot (Yahoo Finance).** `scripts/build-fundamentals.mjs` downloads, in the same deploy, the statements of the watchlist symbols from Yahoo's fundamentals-timeseries API and publishes them under `fundamentals/`. Symbols without statements (ETFs, indices, FX, futures, crypto) are skipped. Yahoo serves about four fiscal years and the last five quarters, so the valuation history covers roughly four years. The browser combines each daily close with the latest trailing-twelve-month figures and balance sheet; figures are dated at the end of their fiscal period, not at publication, and older than 400 days count as missing. Ratios are not computed when the shares trade in a different currency from the statements. These values are descriptive and never reach the backtester.
 
 `Auto` tries the snapshot first and, for crypto symbols, falls back to Binance. Data is daily; weekly and monthly bars are aggregated in the browser. Nothing is saved: each fetch downloads the data again, and only the UI preferences (language, strategy parameters, chart settings) are kept in `localStorage`. Nothing leaves the device except the requests to the site and to Binance.
 

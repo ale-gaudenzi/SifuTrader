@@ -37,6 +37,10 @@ jobs:
         run: npm run history
         continue-on-error: true
 
+      - name: Download fundamentals snapshot
+        run: npm run fundamentals
+        continue-on-error: true
+
       - name: Type-check and build
         run: npm run build
 

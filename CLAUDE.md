@@ -14,6 +14,7 @@ npm test           # Vitest, all src/**/*.test.ts
 npm run typecheck  # tsc -b over app, tests and vite config
 npm run build      # typecheck + production build into dist/
 npm run history    # download the watchlist snapshot into public/history/ (network; needed for Yahoo symbols in dev)
+npm run fundamentals  # download the fundamentals snapshot into public/fundamentals/ (network; needed for the Fundamentals view in dev)
 ```
 
 Node 22.12+ is required (see `.nvmrc`). Before calling a change done, run `npm test` and `npm run build`; both must pass with no TypeScript errors.
@@ -25,7 +26,7 @@ Layers, with dependencies pointing only downward:
 ```text
 components/, App.tsx     React UI
 hooks/, i18n.tsx         UI state, persistence, localization
-data/                    CSV parsing, data providers (snapshot, Binance, samples)
+data/                    CSV parsing, data providers (snapshot, Binance, samples), fundamentals and valuation
 strategies/              Strategy implementations + registry
 engine/                  Types, backtester, indicators, metrics (pure TS)
 ```
@@ -52,7 +53,7 @@ engine/                  Types, backtester, indicators, metrics (pure TS)
 
 **UI strings**: never hard-code user-facing text in components. Add a key to both the `en` and `it` dictionaries in `src/i18n.tsx` and use `t(key, vars)`. The `Messages` type makes a missing Italian key a type error.
 
-**Data providers**: all network code lives in `src/data/providers.ts`. Sources are limited to what works from a static site without a proxy or key: the same-origin history snapshot (`public/history/`, built from `data/watchlist.json` by `scripts/build-history.mjs` in CI) and Binance. Nothing is persisted. Every network path falls back to the bundled sample and must never throw unhandled into the UI.
+**Data providers**: all network code lives in `src/data/providers.ts`. Sources are limited to what works from a static site without a proxy or key: the same-origin history and fundamentals snapshots (`public/history/` and `public/fundamentals/`, built from `data/watchlist.json` by `scripts/build-history.mjs` and `scripts/build-fundamentals.mjs` in CI) and Binance. Nothing is persisted. Every network path falls back to the bundled sample and must never throw unhandled into the UI.
 
 ## Conventions
 
@@ -65,7 +66,7 @@ engine/                  Types, backtester, indicators, metrics (pure TS)
 
 ## Generated and untracked files
 
-- `dist/`, `node_modules/`, `public/history/` are generated and git-ignored. Do not edit or commit them.
+- `dist/`, `node_modules/`, `public/history/`, `public/fundamentals/` are generated and git-ignored. Do not edit or commit them.
 - `public/sample_data/` is bundled, committed data. Edit only when refreshing samples on purpose and keep `index.json` in sync.
 - `data/watchlist.json` lists the snapshot symbols; CI downloads them on every deploy.
 

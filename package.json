@@ -19,7 +19,8 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
-    "history": "node scripts/build-history.mjs public/history"
+    "history": "node scripts/build-history.mjs public/history",
+    "fundamentals": "node scripts/build-fundamentals.mjs public/fundamentals"
   },
   "dependencies": {
     "lightweight-charts": "^5.2.1",

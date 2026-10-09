@@ -9,9 +9,12 @@
  * - Binance public market data: crypto spot pairs, keyless and CORS-enabled.
  * - Bundled samples: static CSV files shipped in `public/sample_data`, used
  *   on first load and as a fallback when the network sources fail.
+ * - Fundamentals snapshot: Yahoo Finance statements of the watchlist stocks,
+ *   built by `scripts/build-fundamentals.mjs` and served from `public/fundamentals`.
  */
 import type { Bar } from '../engine/types';
 import { parseOhlcvCsv } from './csv';
+import { parseFundamentals, type Fundamentals, type FundamentalsIndex } from './fundamentals';
 
 export type DataSource = 'auto' | 'snapshot' | 'binance';
 export type FetchRange = '1y' | '2y' | '5y' | '10y' | 'max';
@@ -395,4 +398,58 @@ export async function fetchMarketData(req: FetchRequest, signal?: AbortSignal): 
     return { ...data, notice: `Online fetch failed; loaded bundled sample for ${sample.symbol}. (${failures.join(' / ')})` };
   }
   throw new Error(failures.join(' / '));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Fundamentals snapshot (same-origin static files)                           */
+/* -------------------------------------------------------------------------- */
+
+let fundamentalsIndexCache: Promise<FundamentalsIndex | null> | null = null;
+const fundamentalsCache = new Map<string, Promise<Fundamentals>>();
+
+/** Index of the fundamentals snapshot, or null when the build has none. */
+export function loadFundamentalsIndex(): Promise<FundamentalsIndex | null> {
+  fundamentalsIndexCache ??= (async () => {
+    try {
+      const res = await fetchWithTimeout(`${import.meta.env.BASE_URL}fundamentals/index.json`);
+      const json: unknown = await res.json();
+      if (!isObject(json) || !isObject(json.symbols)) return null;
+      return json as unknown as FundamentalsIndex;
+    } catch {
+      return null;
+    }
+  })();
+  return fundamentalsIndexCache;
+}
+
+/**
+ * Statements of one symbol. Kept for the session so that switching back and
+ * forth between symbols does not download them again; failures are not kept.
+ */
+export function loadFundamentals(symbol: string): Promise<Fundamentals> {
+  const key = symbol.trim().toUpperCase();
+  let pending = fundamentalsCache.get(key);
+  if (!pending) {
+    pending = (async () => {
+      const entry = (await loadFundamentalsIndex())?.symbols[key];
+      if (!entry) throw new Error(`${key} has no fundamentals in the site snapshot`);
+      const res = await fetchWithTimeout(`${import.meta.env.BASE_URL}fundamentals/${entry.file}`);
+      return parseFundamentals(await res.json());
+    })();
+    pending.catch(() => fundamentalsCache.delete(key));
+    fundamentalsCache.set(key, pending);
+  }
+  return pending;
+}
+
+/** Full daily price history for the fundamentals page: snapshot first, bundled sample as fallback. */
+export async function loadPriceHistory(symbol: string, signal?: AbortSignal): Promise<Dataset> {
+  try {
+    return await fetchSnapshot({ symbol, source: 'snapshot', range: 'max' }, signal);
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    const sample = await findSampleFor(symbol);
+    if (!sample) throw e;
+    return { ...(await loadSample(sample.symbol)), notice: `Snapshot unavailable; using the bundled sample for ${sample.symbol}. (${errorMessage(e)})` };
+  }
 }
