@@ -37,6 +37,8 @@ const en = {
   'err.range': '{label} must be between {min} and {max}.',
   'err.integer': '{label} must be a whole number.',
   'err.smaOrder': 'Fast SMA period must be shorter than the slow SMA period.',
+  'err.macdOrder': 'Fast EMA period must be shorter than the slow EMA period.',
+  'err.rsiLevels': 'Exit level must be above the oversold level.',
 
   'tf.1D': '1D',
   'tf.1W': '1W',
@@ -165,6 +167,8 @@ const it: Messages = {
   'err.range': '{label} deve essere compreso tra {min} e {max}.',
   'err.integer': '{label} deve essere un numero intero.',
   'err.smaOrder': 'Il periodo della SMA veloce deve essere inferiore a quello della SMA lenta.',
+  'err.macdOrder': "Il periodo dell'EMA veloce deve essere inferiore a quello dell'EMA lenta.",
+  'err.rsiLevels': 'Il livello di uscita deve essere superiore al livello di ipervenduto.',
 
   'tf.1D': '1G',
   'tf.1W': '1S',
@@ -282,6 +286,12 @@ interface StrategyText {
   params: Record<string, { label: string; description: string }>;
 }
 
+/** Italian texts for the shared `ALLOCATION_PARAM`. */
+const ALLOCATION_IT = { label: 'Allocazione', description: 'Quota della liquidità disponibile investita a ogni segnale long.' };
+
+/** Validation messages that strategies emit verbatim, translated by exact match. */
+const EXACT_ERRORS: readonly MessageKey[] = ['err.smaOrder', 'err.macdOrder', 'err.rsiLevels'];
+
 /** Italian texts for registered strategies, keyed by strategy id. */
 const STRATEGIES_IT: Record<string, StrategyText> = {
   martingale: {
@@ -304,7 +314,64 @@ const STRATEGIES_IT: Record<string, StrategyText> = {
     params: {
       fastPeriod: { label: 'SMA veloce', description: 'Periodo della media mobile veloce.' },
       slowPeriod: { label: 'SMA lenta', description: 'Periodo della media mobile lenta. Deve superare il periodo veloce.' },
-      allocationPct: { label: 'Allocazione', description: 'Quota della liquidità disponibile investita a ogni segnale long.' },
+      allocationPct: ALLOCATION_IT,
+    },
+  },
+  'macd-cross': {
+    name: 'Incrocio MACD',
+    description: "Apre una posizione long quando la linea MACD incrocia al rialzo la linea di segnale e passa alla liquidità con l'incrocio opposto.",
+    params: {
+      fastPeriod: { label: 'EMA veloce', description: 'Periodo della media mobile esponenziale veloce.' },
+      slowPeriod: { label: 'EMA lenta', description: "Periodo dell'EMA lenta. Deve superare il periodo veloce." },
+      signalPeriod: { label: 'EMA di segnale', description: "Periodo dell'EMA applicata alla linea MACD." },
+      belowZeroOnly: { label: 'Solo sotto lo zero', description: 'Considera solo gli incroci rialzisti che avvengono con la linea MACD sotto lo zero.' },
+      allocationPct: ALLOCATION_IT,
+    },
+  },
+  'donchian-breakout': {
+    name: 'Breakout di Donchian',
+    description: 'Acquista sulla chiusura sopra il massimo delle ultime N barre ed esce sulla chiusura sotto il minimo delle ultime M barre (trend following stile Turtle).',
+    params: {
+      entryPeriod: { label: 'Canale di ingresso', description: 'Acquista sulla chiusura sopra il massimo di questo numero di barre precedenti.' },
+      exitPeriod: { label: 'Canale di uscita', description: 'Vende sulla chiusura sotto il minimo di questo numero di barre precedenti.' },
+      allocationPct: ALLOCATION_IT,
+    },
+  },
+  momentum: {
+    name: 'Momentum assoluto',
+    description: 'Mantiene il titolo finché il rendimento sul periodo di osservazione supera una soglia e resta in liquidità altrimenti.',
+    params: {
+      lookback: { label: 'Periodo di osservazione', description: 'Barre su cui si misura il rendimento (126 barre giornaliere sono circa sei mesi).' },
+      thresholdPct: { label: 'Soglia', description: 'Rendimento minimo sul periodo richiesto per mantenere il titolo.' },
+      allocationPct: ALLOCATION_IT,
+    },
+  },
+  'rsi-reversion': {
+    name: 'Ritorno alla media RSI',
+    description: "Acquista quando l'RSI chiude sotto un livello di ipervenduto e passa alla liquidità quando risale sopra un livello di uscita.",
+    params: {
+      rsiPeriod: { label: 'Periodo RSI', description: 'Periodo del Relative Strength Index (smussamento di Wilder).' },
+      entryLevel: { label: 'Livello di ipervenduto', description: "Acquista quando l'RSI chiude sotto questo livello." },
+      exitLevel: { label: 'Livello di uscita', description: "Vende quando l'RSI chiude sopra questo livello. Deve superare il livello di ipervenduto." },
+      allocationPct: ALLOCATION_IT,
+    },
+  },
+  'bollinger-reversion': {
+    name: 'Ritorno alla media Bollinger',
+    description: 'Acquista su una chiusura sotto la banda di Bollinger inferiore e vende quando il prezzo torna alla banda centrale (o a quella superiore).',
+    params: {
+      period: { label: 'Periodo bande', description: 'Periodo della media mobile e della deviazione standard.' },
+      stdDev: { label: 'Ampiezza bande', description: 'Numero di deviazioni standard tra la banda centrale e quelle esterne.' },
+      exitAtUpper: { label: 'Uscita sulla banda superiore', description: 'Mantiene la posizione fino alla banda superiore invece di uscire su quella centrale.' },
+      allocationPct: ALLOCATION_IT,
+    },
+  },
+  dca: {
+    name: 'Piano di accumulo (PAC)',
+    description: 'Investe una quota fissa del capitale iniziale a intervalli regolari finché resta liquidità, senza mai vendere.',
+    params: {
+      intervalBars: { label: 'Intervallo', description: 'Barre tra un acquisto e il successivo (21 barre giornaliere sono circa un mese).' },
+      amountPct: { label: 'Importo', description: 'Importo di ogni acquisto in percentuale del capitale iniziale.' },
     },
   },
 };
@@ -341,7 +408,8 @@ export function createI18n(lang: Lang, setLang: (lang: Lang) => void = () => {})
 
   const validationMessage = (def: StrategyDefinition, message: string): string => {
     if (lang === 'en') return message;
-    if (message === en['err.smaOrder']) return t('err.smaOrder');
+    const exact = EXACT_ERRORS.find((key) => en[key] === message);
+    if (exact) return t(exact);
     const label = (english: string): string => {
       const spec = def.params.find((p) => p.label === english);
       return spec ? paramLabel(def.id, spec) : english;

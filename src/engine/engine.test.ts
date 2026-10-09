@@ -4,8 +4,22 @@ import { parseOhlcvCsv } from '../data/csv';
 import { martingaleDefinition } from '../strategies/martingale';
 import { defaultParams } from '../strategies/base';
 import { smaCrossDefinition } from '../strategies/smaCross';
+import { STRATEGIES } from '../strategies';
 import { BacktestError, runBacktest } from './backtester';
-import { bollinger, crossedAbove, crossedBelow, ema, inferPeriodsPerYear, resample, sma } from './indicators';
+import {
+  bollinger,
+  crossedAbove,
+  crossedBelow,
+  ema,
+  inferPeriodsPerYear,
+  macd,
+  resample,
+  roc,
+  rollingMax,
+  rollingMin,
+  rsi,
+  sma,
+} from './indicators';
 import { maxDrawdownPct } from './metrics';
 import type { BacktestConfig, Bar, Order, Strategy, StrategyContext } from './types';
 
@@ -65,6 +79,34 @@ describe('indicators', () => {
     // mean 2, population sd 1
     expect(bb.upper[1]).toBeCloseTo(4);
     expect(bb.lower[1]).toBeCloseTo(0);
+  });
+
+  it("computes the RSI with Wilder's smoothing", () => {
+    // Two gains seed avgGain 1 / avgLoss 0 (RSI 100); a loss of 1 then gives 0.5 / 0.5.
+    expect(rsi([1, 2, 3, 2], 2)).toEqual([null, null, 100, 50]);
+    expect(rsi([5, 5, 5], 2)[2]).toBe(50);
+  });
+
+  it('computes MACD and seeds the signal line after the MACD warm-up', () => {
+    const flat = macd([3, 3, 3, 3, 3, 3], 2, 3, 2);
+    expect(flat.macd).toEqual([null, null, 0, 0, 0, 0]);
+    expect(flat.signal).toEqual([null, null, null, 0, 0, 0]);
+    expect(flat.histogram[2]).toBeNull();
+
+    const values = [1, 2, 4, 8, 16, 32];
+    const m = macd(values, 2, 3, 2);
+    const fast = ema(values, 2);
+    const slow = ema(values, 3);
+    expect(m.macd[5]).toBeCloseTo((fast[5] ?? 0) - (slow[5] ?? 0));
+  });
+
+  it('computes rolling extremes and rate of change', () => {
+    expect(rollingMax([1, 3, 2, 5, 4], 2)).toEqual([null, 3, 3, 5, 5]);
+    expect(rollingMin([1, 3, 2, 5, 4], 2)).toEqual([null, 1, 2, 2, 4]);
+    const r = roc([100, 110, 99], 1);
+    expect(r[0]).toBeNull();
+    expect(r[1]).toBeCloseTo(10);
+    expect(r[2]).toBeCloseTo(-10);
   });
 
   it('detects crossovers only on the crossing bar', () => {
@@ -277,10 +319,7 @@ describe('SMA crossover strategy', () => {
 describe('invariants on bundled market data', () => {
   const datasets = ['AAPL.csv', 'BTC-USD.csv', 'SPY.csv'];
   const cfg: BacktestConfig = { initialCapital: 10_000, feePct: 0.1, slippagePct: 0.05 };
-  const strategies = [
-    () => martingaleDefinition.create(defaultParams(martingaleDefinition.params)),
-    () => smaCrossDefinition.create(defaultParams(smaCrossDefinition.params)),
-  ];
+  const strategies = STRATEGIES.map((def) => () => def.create(defaultParams(def.params)));
 
   for (const file of datasets) {
     const bars = loadSampleBars(file);

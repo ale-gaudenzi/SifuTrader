@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createI18n } from './i18n';
 import { STRATEGIES } from './strategies';
+import { macdCrossDefinition } from './strategies/macdCross';
 import { martingaleDefinition } from './strategies/martingale';
+import { rsiReversionDefinition } from './strategies/rsiReversion';
 import { smaCrossDefinition } from './strategies/smaCross';
 
 describe('Italian localization', () => {
@@ -26,6 +28,11 @@ describe('Italian localization', () => {
 
     const [order] = smaCrossDefinition.validate({ fastPeriod: 50, slowPeriod: 20, allocationPct: 100 });
     expect(it18n.validationMessage(smaCrossDefinition, order)).toBe('Il periodo della SMA veloce deve essere inferiore a quello della SMA lenta.');
+
+    const [macdOrder] = macdCrossDefinition.validate({ fastPeriod: 30, slowPeriod: 26, signalPeriod: 9, belowZeroOnly: false, allocationPct: 100 });
+    expect(it18n.validationMessage(macdCrossDefinition, macdOrder)).toBe("Il periodo dell'EMA veloce deve essere inferiore a quello dell'EMA lenta.");
+    const [levels] = rsiReversionDefinition.validate({ rsiPeriod: 14, entryLevel: 60, exitLevel: 40, allocationPct: 100 });
+    expect(it18n.validationMessage(rsiReversionDefinition, levels)).toBe('Il livello di uscita deve essere superiore al livello di ipervenduto.');
   });
 
   it('interpolates placeholders and leaves English untouched', () => {

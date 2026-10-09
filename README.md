@@ -20,7 +20,7 @@ Built with React 19, TypeScript, Vite, Tailwind CSS 4, [Lightweight Charts](http
 - OHLCV tooltip, cursor legend, zoom, pan, log scale, and buy/sell markers for every backtest fill.
 
 **Backtesting**
-- Pluggable strategies with parameter forms generated from a declarative schema. Included: Martingale dip-buying and dual SMA crossover.
+- Pluggable strategies with parameter forms generated from a declarative schema. Included: Martingale dip-buying, dual SMA crossover, MACD crossover, Donchian breakout, time-series momentum, RSI and Bollinger Band mean reversion, and dollar-cost averaging.
 - Configurable capital, commission and slippage.
 - Metrics: final equity, total and buy-and-hold return, max drawdown, win rate, trades, CAGR, Sharpe, profit factor, exposure, fees.
 - Equity curve against buy and hold with a drawdown pane; sortable, paginated trade log with CSV export.
@@ -99,6 +99,63 @@ There is deliberately no stop-loss: after `Max Steps` buys the strategy holds un
 | Allocation | 100% | Share of cash invested on each long signal |
 
 Goes long at the next open after the fast SMA closes above the slow SMA, and exits after the opposite cross.
+
+All the signal strategies below are long-only and all-in/all-out: they evaluate on the bar close, trade at the next open, and invest `Allocation` (default 100%) of the available cash on each entry.
+
+### MACD crossover
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| Fast EMA / Slow EMA | 12 / 26 | EMAs whose difference is the MACD line (fast must be shorter) |
+| Signal EMA | 9 | EMA of the MACD line |
+| Below Zero Only | off | Only take bullish crosses while the MACD line is below zero |
+
+Buys after the MACD line crosses above the signal line, sells after the opposite cross.
+
+### Donchian breakout
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| Entry Channel | 20 | Buy on a close above the highest high of the previous N bars |
+| Exit Channel | 10 | Sell on a close below the lowest low of the previous N bars |
+
+Turtle-style trend following. The current bar is excluded from the channel it has to break.
+
+### Time-series momentum
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| Lookback | 126 | Bars over which the return is measured (about six months of daily bars) |
+| Threshold | 0% | Minimum lookback return required to hold |
+
+A regime filter: holds while the lookback return is above the threshold and stays in cash otherwise.
+
+### RSI mean reversion
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| RSI Period | 14 | Wilder RSI lookback |
+| Oversold Level | 30 | Buy when the RSI closes below it |
+| Exit Level | 55 | Sell when the RSI closes above it (must exceed the oversold level) |
+
+### Bollinger Band reversion
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| Band Period | 20 | Moving-average and standard-deviation window |
+| Band Width | 2.0x | Standard deviations to the outer bands |
+| Exit at Upper Band | off | Hold until the upper band instead of the middle band |
+
+Buys a close below the lower band and sells when price reverts to the middle (or upper) band. Neither mean-reversion strategy has a stop-loss.
+
+### Dollar-cost averaging
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| Interval | 21 | Bars between purchases (about monthly on daily bars) |
+| Amount | 2% | Each purchase as a percentage of the initial capital |
+
+Buys on schedule from the first bar until the cash runs out and never sells, so the result is one open position. Useful as a comparison with lump-sum buy and hold.
 
 ### Adding a strategy
 

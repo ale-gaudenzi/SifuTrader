@@ -93,6 +93,109 @@ export function bollinger(values: readonly number[], period = 20, multiplier = 2
   return { middle, upper, lower };
 }
 
+/**
+ * EMA of a series that starts with `null` warm-up values (e.g. the output of
+ * another indicator). The EMA is seeded from the first `period` defined values.
+ */
+function emaOfSeries(values: Series, period: number): Series {
+  const start = values.findIndex((v) => v !== null);
+  const out: Series = new Array<number | null>(values.length).fill(null);
+  if (start < 0) return out;
+  const tail = values.slice(start).map((v) => v ?? 0);
+  ema(tail, period).forEach((v, k) => {
+    out[start + k] = v;
+  });
+  return out;
+}
+
+/**
+ * Relative Strength Index with Wilder's smoothing. The first value, at index
+ * `period`, averages the first `period` price changes. A window without losses
+ * reads 100, and one without any movement reads 50.
+ */
+export function rsi(values: readonly number[], period = 14): Series {
+  assertPeriod(period);
+  const out: Series = new Array<number | null>(values.length).fill(null);
+  if (values.length <= period) return out;
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
+    const change = values[i] - values[i - 1];
+    if (change > 0) avgGain += change;
+    else avgLoss -= change;
+  }
+  avgGain /= period;
+  avgLoss /= period;
+  const value = (): number => (avgLoss === 0 ? (avgGain === 0 ? 50 : 100) : 100 - 100 / (1 + avgGain / avgLoss));
+  out[period] = value();
+  for (let i = period + 1; i < values.length; i++) {
+    const change = values[i] - values[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(change, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-change, 0)) / period;
+    out[i] = value();
+  }
+  return out;
+}
+
+export interface Macd {
+  /** EMA(fast) - EMA(slow). */
+  macd: Series;
+  /** EMA(signal) of the MACD line. */
+  signal: Series;
+  /** MACD line minus signal line. */
+  histogram: Series;
+}
+
+/** Moving Average Convergence Divergence. */
+export function macd(values: readonly number[], fast = 12, slow = 26, signalPeriod = 9): Macd {
+  const fastEma = ema(values, fast);
+  const slowEma = ema(values, slow);
+  const line: Series = fastEma.map((f, i) => {
+    const s = slowEma[i];
+    return f === null || s === null ? null : f - s;
+  });
+  const signal = emaOfSeries(line, signalPeriod);
+  const histogram: Series = line.map((m, i) => {
+    const s = signal[i];
+    return m === null || s === null ? null : m - s;
+  });
+  return { macd: line, signal, histogram };
+}
+
+/** Highest value over the trailing window ending at each index (inclusive). */
+export function rollingMax(values: readonly number[], period: number): Series {
+  assertPeriod(period);
+  const out: Series = new Array<number | null>(values.length).fill(null);
+  for (let i = period - 1; i < values.length; i++) {
+    let max = values[i];
+    for (let k = i - period + 1; k < i; k++) if (values[k] > max) max = values[k];
+    out[i] = max;
+  }
+  return out;
+}
+
+/** Lowest value over the trailing window ending at each index (inclusive). */
+export function rollingMin(values: readonly number[], period: number): Series {
+  assertPeriod(period);
+  const out: Series = new Array<number | null>(values.length).fill(null);
+  for (let i = period - 1; i < values.length; i++) {
+    let min = values[i];
+    for (let k = i - period + 1; k < i; k++) if (values[k] < min) min = values[k];
+    out[i] = min;
+  }
+  return out;
+}
+
+/** Rate of change over `period` bars, in percent. */
+export function roc(values: readonly number[], period: number): Series {
+  assertPeriod(period);
+  return values.map((v, i) => {
+    if (i < period) return null;
+    const base = values[i - period];
+    return base === 0 ? null : (v / base - 1) * 100;
+  });
+}
+
 /** True when series `a` crosses strictly above `b` on bar `i`. */
 export function crossedAbove(a: Series, b: Series, i: number): boolean {
   if (i < 1) return false;

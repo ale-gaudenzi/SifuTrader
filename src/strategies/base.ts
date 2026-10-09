@@ -48,6 +48,27 @@ export abstract class BaseStrategy<P extends ParamValues> implements Strategy {
   }
 }
 
+/** Share of cash committed per entry, common to the all-in/all-out signal strategies. */
+export const ALLOCATION_PARAM: ParamSpec = {
+  key: 'allocationPct',
+  label: 'Allocation',
+  type: 'number',
+  default: 100,
+  min: 1,
+  max: 100,
+  step: 1,
+  unit: '%',
+  description: 'Share of available cash invested on each long signal.',
+};
+
+/**
+ * Integer bar-count parameter. The `label` doubles as the key used to match
+ * validation messages, so it must be unique within a strategy.
+ */
+export function periodParam(key: string, label: string, defaultValue: number, description: string, min = 2, max = 400): ParamSpec {
+  return { key, label, type: 'number', default: defaultValue, min, max, step: 1, integer: true, unit: 'bars', description };
+}
+
 /** Builds a parameter object populated with each spec's default value. */
 export function defaultParams(specs: readonly ParamSpec[]): ParamValues {
   const out: ParamValues = {};
