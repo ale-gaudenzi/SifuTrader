@@ -120,14 +120,16 @@ export default function StrategyPanel(props: StrategyPanelProps) {
       </CollapsibleHeader>
       <div id="strategy-panel-body" className="space-y-4 p-3" hidden={!open}>
         <div>
-          <span className="field-label">{t('strategy.strategy')}</span>
-          <div className="seg w-full" role="group" aria-label={t('strategy.strategy')}>
+          <label htmlFor="strategy-select" className="field-label">
+            {t('strategy.strategy')}
+          </label>
+          <select id="strategy-select" className="input" value={def.id} onChange={(e) => onStrategyChange(e.target.value)}>
             {strategies.map((s) => (
-              <button key={s.id} type="button" className="flex-1" aria-pressed={s.id === def.id} onClick={() => onStrategyChange(s.id)}>
+              <option key={s.id} value={s.id}>
                 {strategyName(s)}
-              </button>
+              </option>
             ))}
-          </div>
+          </select>
           <p className="mt-2 text-[11px] leading-snug text-terminal-faint">{strategyDescription(def)}</p>
         </div>
 
