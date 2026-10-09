@@ -21,7 +21,7 @@ Built with React 19, TypeScript, Vite, Tailwind CSS 4, [Lightweight Charts](http
 
 **Backtesting**
 - Pluggable strategies with parameter forms generated from a declarative schema. Included: Martingale dip-buying, dual SMA crossover, MACD crossover, Donchian breakout, time-series momentum, RSI and Bollinger Band mean reversion, and dollar-cost averaging.
-- Configurable capital, commission and slippage.
+- Configurable capital, commission and slippage, and a date range to test only part of the loaded history (the run starts with fresh capital on the first bar of the range, as if the data began there).
 - Metrics: final equity, total and buy-and-hold return, max drawdown, win rate, trades, CAGR, Sharpe, profit factor, exposure, fees.
 - Equity curve against buy and hold with a drawdown pane; sortable, paginated trade log with CSV export.
 - Results recompute on every change of data, timeframe or parameters.

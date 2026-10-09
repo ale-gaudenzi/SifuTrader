@@ -8,14 +8,14 @@ import DataInput from './components/DataInput';
 import EquityChart from './components/EquityChart';
 import Metrics from './components/Metrics';
 import { Logo } from './components/Logo';
-import StrategyPanel from './components/StrategyPanel';
+import StrategyPanel, { type BacktestPeriod, type PeriodRange } from './components/StrategyPanel';
 import TradeTable from './components/TradeTable';
 import type { Dataset } from './data/providers';
 import { BacktestError, DEFAULT_CONFIG, runBacktest } from './engine/backtester';
 import { resample } from './engine/indicators';
 import type { BacktestConfig, BacktestResult, ParamValues, Timeframe } from './engine/types';
 import { isOneOf, usePersistentState } from './hooks/usePersistentState';
-import { formatDate } from './format';
+import { formatDate, isoDate } from './format';
 import { LANGS, useI18n } from './i18n';
 import { STRATEGIES, getStrategy } from './strategies';
 import { defaultParams } from './strategies/base';
@@ -60,6 +60,25 @@ export default function App() {
 
   const bars = useMemo(() => (dataset ? resample(dataset.bars, timeframe) : []), [dataset, timeframe]);
 
+  // The chosen dates are kept across symbol changes and clamped to whatever data is loaded.
+  const [period, setPeriod] = useState<BacktestPeriod>({ start: '', end: '' });
+  const range = useMemo<PeriodRange | null>(() => {
+    const head = bars[0];
+    const tail = bars[bars.length - 1];
+    if (!head || !tail) return null;
+    const min = isoDate(head.time);
+    const max = isoDate(tail.time);
+    const clamp = (v: string, fallback: string): string => (v === '' ? fallback : v < min ? min : v > max ? max : v);
+    return { min, max, start: clamp(period.start, min), end: clamp(period.end, max) };
+  }, [bars, period]);
+  // Slicing (rather than warming up on earlier bars) keeps the run identical to loading only this window.
+  const testBars = useMemo(() => {
+    if (!range || (range.start === range.min && range.end === range.max)) return bars;
+    const from = Date.parse(range.start) / 1000;
+    const to = Date.parse(range.end) / 1000;
+    return bars.filter((b) => b.time >= from && b.time <= to);
+  }, [bars, range]);
+
   // Deferring inputs keeps typing in parameter fields responsive on long histories.
   const deferredParams = useDeferredValue(params);
   const deferredConfig = useDeferredValue(config);
@@ -67,19 +86,20 @@ export default function App() {
   const outcome = useMemo<RunOutcome>(() => {
     if (bars.length === 0) return { result: null, errors: [], runtimeMs: null };
     const errors = definition.validate(deferredParams);
+    if (testBars.length < 2) errors.push(t('err.period'));
     if (!(deferredConfig.initialCapital > 0)) errors.push(t('err.capital'));
     if (!(deferredConfig.feePct >= 0 && deferredConfig.feePct <= 5)) errors.push(t('err.fee'));
     if (!(deferredConfig.slippagePct >= 0 && deferredConfig.slippagePct <= 5)) errors.push(t('err.slippage'));
     if (errors.length > 0) return { result: null, errors, runtimeMs: null };
     try {
       const t0 = performance.now();
-      const result = runBacktest(bars, definition.create(deferredParams), deferredConfig, deferredParams);
+      const result = runBacktest(testBars, definition.create(deferredParams), deferredConfig, deferredParams);
       return { result, errors: [], runtimeMs: performance.now() - t0 };
     } catch (e) {
       const message = e instanceof BacktestError || e instanceof Error ? e.message : String(e);
       return { result: null, errors: [message], runtimeMs: null };
     }
-  }, [bars, definition, deferredParams, deferredConfig, t]);
+  }, [bars, testBars, definition, deferredParams, deferredConfig, t]);
 
   const { result } = outcome;
   const errors = outcome.errors.map((e) => i18n.validationMessage(definition, e));
@@ -130,7 +150,10 @@ export default function App() {
             onConfigChange={setConfig}
             errors={errors}
             runtimeMs={outcome.runtimeMs}
-            barsCount={bars.length}
+            barsCount={testBars.length}
+            period={period}
+            onPeriodChange={setPeriod}
+            range={range}
           />
         </aside>
 

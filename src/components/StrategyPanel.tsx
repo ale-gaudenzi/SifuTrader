@@ -101,10 +101,33 @@ export interface StrategyPanelProps {
   /** Milliseconds taken by the last run, for display. */
   runtimeMs: number | null;
   barsCount: number;
+  /** Dates chosen by the user; an empty string leaves that side open. */
+  period: BacktestPeriod;
+  onPeriodChange: (period: BacktestPeriod) => void;
+  /**
+   * Effective period clamped to the data, or null while no data is loaded. The
+   * inputs show the raw `period` instead, so clamping never fights a date being typed.
+   */
+  range: PeriodRange | null;
+}
+
+/** ISO `YYYY-MM-DD` bounds of the backtest window, as typed in the date inputs. */
+export interface BacktestPeriod {
+  start: string;
+  end: string;
+}
+
+/** The window actually tested (`start`/`end`) inside the available data (`min`/`max`). */
+export interface PeriodRange {
+  min: string;
+  max: string;
+  start: string;
+  end: string;
 }
 
 export default function StrategyPanel(props: StrategyPanelProps) {
-  const { strategies, strategyId, onStrategyChange, params, onParamsChange, onResetParams, config, onConfigChange, errors, runtimeMs, barsCount } = props;
+  const { strategies, strategyId, onStrategyChange, params, onParamsChange, onResetParams, config, onConfigChange, errors, runtimeMs, barsCount, period, onPeriodChange, range } =
+    props;
   const { t, strategyName, strategyDescription } = useI18n();
   const def = strategies.find((s) => s.id === strategyId) ?? strategies[0];
   const [open, setOpen] = usePersistentState('ui.strategyOpen', true, isBoolean);
@@ -144,6 +167,53 @@ export default function StrategyPanel(props: StrategyPanelProps) {
             />
           ))}
         </div>
+
+        {range && (
+          <div className="border-t border-terminal-border pt-3">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="field-label mb-0">{t('strategy.period')}</span>
+              <button
+                type="button"
+                className="text-[11px] text-terminal-faint transition-colors hover:text-terminal-text disabled:pointer-events-none disabled:opacity-0"
+                disabled={period.start === '' && period.end === ''}
+                onClick={() => onPeriodChange({ start: '', end: '' })}
+              >
+                {t('strategy.periodAll')}
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-x-2">
+              <div>
+                <label htmlFor="period-start" className="field-label">
+                  {t('strategy.periodFrom')}
+                </label>
+                <input
+                  id="period-start"
+                  type="date"
+                  className="input text-xs"
+                  value={period.start || range.min}
+                  min={range.min}
+                  max={range.end}
+                  onChange={(e) => onPeriodChange({ ...period, start: e.target.value })}
+                />
+              </div>
+              <div>
+                <label htmlFor="period-end" className="field-label">
+                  {t('strategy.periodTo')}
+                </label>
+                <input
+                  id="period-end"
+                  type="date"
+                  className="input text-xs"
+                  value={period.end || range.max}
+                  min={range.start}
+                  max={range.max}
+                  onChange={(e) => onPeriodChange({ ...period, end: e.target.value })}
+                />
+              </div>
+            </div>
+            <p className="mt-2 text-[11px] leading-snug text-terminal-faint">{t('strategy.periodNote')}</p>
+          </div>
+        )}
 
         <div className="border-t border-terminal-border pt-3">
           <span className="field-label">{t('strategy.execution')}</span>
