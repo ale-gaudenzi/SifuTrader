@@ -1,0 +1,86 @@
+@import 'tailwindcss';
+
+/*
+ * Terminal theme tokens. The application is dark-only by design (a trading
+ * terminal aesthetic), so tokens are defined once rather than per scheme.
+ */
+@theme {
+  --color-terminal-bg: #0a0d12;
+  --color-terminal-panel: #0f131a;
+  --color-terminal-raised: #151a23;
+  --color-terminal-border: #232a35;
+  --color-terminal-text: #d6dde6;
+  --color-terminal-muted: #8b95a3;
+  --color-terminal-faint: #5d6876;
+  --color-accent: #3987e5;
+  --color-accent-strong: #2a78d6;
+  --color-up: #26a69a;
+  --color-down: #ef5350;
+  --color-warn: #fab219;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-terminal-bg text-terminal-text font-sans antialiased;
+    min-height: 100vh;
+  }
+  input[type='number']::-webkit-inner-spin-button {
+    opacity: 0.4;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-terminal-border);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-md border border-terminal-border bg-terminal-panel;
+  }
+  .panel-header {
+    @apply flex items-center justify-between gap-2 border-b border-terminal-border px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-terminal-muted;
+  }
+  .field-label {
+    @apply mb-1 block text-[11px] font-medium uppercase tracking-wide text-terminal-muted;
+  }
+  .input {
+    @apply w-full rounded border border-terminal-border bg-terminal-bg px-2 py-1.5 font-mono text-sm text-terminal-text outline-none transition-colors placeholder:text-terminal-faint focus:border-accent;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded border border-terminal-border bg-terminal-raised px-3 py-1.5 text-xs font-medium text-terminal-text transition-colors hover:border-terminal-faint disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply border-accent-strong bg-accent-strong text-white hover:bg-accent hover:border-accent;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors;
+  }
+  .chip-on {
+    @apply border-terminal-faint bg-terminal-raised text-terminal-text;
+  }
+  .chip-off {
+    @apply border-terminal-border bg-transparent text-terminal-faint hover:text-terminal-muted;
+  }
+  .seg {
+    @apply inline-flex overflow-hidden rounded border border-terminal-border;
+  }
+  .seg > button {
+    @apply px-2.5 py-1 font-mono text-[11px] text-terminal-muted transition-colors hover:text-terminal-text;
+  }
+  .seg > button[aria-pressed='true'] {
+    @apply bg-terminal-raised text-terminal-text;
+  }
+}

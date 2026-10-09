@@ -1,0 +1,11 @@
+{
+  "description": "Tickers whose full daily history is downloaded by scripts/build-history.mjs (Yahoo Finance symbols). Add or remove symbols here.",
+  "symbols": [
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK-B", "JPM", "V",
+    "SPY", "QQQ", "IWM", "GLD", "TLT",
+    "^GSPC", "^NDX", "^DJI", "^STOXX50E", "FTSEMIB.MI",
+    "ENI.MI", "ISP.MI", "UCG.MI", "ENEL.MI", "STLAM.MI",
+    "EURUSD=X", "GC=F", "CL=F",
+    "BTC-USD", "ETH-USD", "SOL-USD"
+  ]
+}
