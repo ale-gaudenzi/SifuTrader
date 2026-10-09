@@ -118,7 +118,7 @@ export default function App() {
       {/* On wide screens the sidebar and the results scroll independently, like two columns. */}
       <div className="grid flex-1 grid-cols-1 gap-3 p-3 lg:min-h-0 lg:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="space-y-3 lg:min-h-0 lg:overflow-y-auto">
-          <DataInput onDataset={setDataset} activeSymbol={dataset?.symbol ?? null} activeKey={dataset?.storeKey ?? null} initialSample="AAPL" />
+          <DataInput onDataset={setDataset} activeSymbol={dataset?.symbol ?? null} initialSample="AAPL" />
           <StrategyPanel
             strategies={STRATEGIES}
             strategyId={definition.id}

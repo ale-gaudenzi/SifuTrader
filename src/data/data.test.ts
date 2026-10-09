@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CsvParseError, barsToCsv, parseDate, parseOhlcvCsv } from './csv';
-import { looksLikeCrypto, parseAlphaVantage, parseYahooChart, toBinanceSymbol } from './providers';
+import { looksLikeCrypto, parseYahooChart, toBinanceSymbol } from './providers';
 
 const utc = (y: number, m: number, d: number): number => Date.UTC(y, m - 1, d) / 1000;
 
@@ -97,18 +97,6 @@ describe('provider parsers', () => {
   it('surfaces Yahoo error descriptions', () => {
     const body = JSON.stringify({ chart: { result: null, error: { code: 'Not Found', description: 'No data found' } } });
     expect(() => parseYahooChart(body)).toThrow('No data found');
-  });
-
-  it('parses Alpha Vantage series and API notes', () => {
-    const bars = parseAlphaVantage({
-      'Meta Data': {},
-      'Time Series (Daily)': {
-        '2024-01-03': { '1. open': '2', '2. high': '3', '3. low': '1', '4. close': '2.5', '5. volume': '7' },
-        '2024-01-02': { '1. open': '1', '2. high': '2', '3. low': '1', '4. close': '1.5', '5. volume': '5' },
-      },
-    });
-    expect(bars.map((b) => b.time)).toEqual([utc(2024, 1, 2), utc(2024, 1, 3)]);
-    expect(() => parseAlphaVantage({ Note: 'rate limited' })).toThrow('rate limited');
   });
 
   it('maps crypto symbols to Binance pairs', () => {

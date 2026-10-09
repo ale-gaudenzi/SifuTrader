@@ -10,10 +10,9 @@ Built with React 19, TypeScript, Vite, Tailwind CSS 4, [Lightweight Charts](http
 
 **Market data**
 - Bundled 5-year daily samples (AAPL, MSFT, NVDA, SPY, BTC-USD, ETH-USD): the app works offline with no API keys.
-- Online fetch from Yahoo Finance (equities, ETFs, indices, FX, crypto), Binance (crypto) and Alpha Vantage (equities, own key). `Auto` routes crypto to Binance and everything else to Yahoo.
+- Online fetch, with no proxy and no API key: Yahoo Finance history for the symbols in `data/watchlist.json` (equities, ETFs, indices, FX, futures, crypto), published with the site as a static snapshot, and any crypto pair live from Binance.
 - CSV drag-and-drop with header aliases, delimiter and date-format detection, number cleanup, duplicate merging and a report of skipped rows.
-- Local history database in IndexedDB: fetched tickers and uploaded CSVs are saved with their full history, updated incrementally, and available offline. The **Saved tickers** list opens, updates, exports and deletes them.
-- History snapshot: the symbols in `data/watchlist.json` are downloaded at build time and served with the site, so they load with no CORS proxy.
+- Nothing is stored: market data is downloaded on every fetch and kept only in memory.
 
 **Chart**
 - Candlesticks with a resizable volume pane, 1D / 1W / 1M timeframes aggregated client-side.
@@ -40,7 +39,7 @@ npm run dev        # http://localhost:5173
 npm test           # unit tests (Vitest)
 npm run build      # type-check and build into dist/
 npm run preview    # serve dist/ locally
-npm run history    # optional: download the watchlist snapshot into public/history/
+npm run history    # download the watchlist snapshot into public/history/ (needed to fetch Yahoo symbols locally)
 ```
 
 ## Project structure
@@ -54,9 +53,9 @@ public/history/                Generated history snapshot (git-ignored)
 src/
   engine/                      Domain types, backtester, indicators, metrics (pure TS)
   strategies/                  BaseStrategy, strategy implementations, registry
-  data/                        CSV parsing, providers, IndexedDB store, cache-first loading
+  data/                        CSV parsing, data providers
   components/                  Charts, data input, strategy panel, metrics, trade log
-  hooks/                       localStorage preferences, saved-series list
+  hooks/                       localStorage preferences
   i18n.tsx                     English / Italian strings and language provider
   App.tsx, main.tsx
 ```
@@ -121,43 +120,13 @@ export class MyStrategy extends BaseStrategy<MyParams> {
 
 ## Data sources
 
-### Yahoo Finance and CORS
+Only sources that work from a static site, with no proxy, key or local storage:
 
-Yahoo does not send CORS headers, so the app reaches it in this order:
+1. **Site snapshot (Yahoo Finance).** Yahoo sends no CORS headers, so the browser cannot call it. Instead, `scripts/build-history.mjs` downloads the full daily history of every symbol in `data/watchlist.json` server-side, during the GitHub Actions deploy (on every push and every weekday at 22:30 UTC), and publishes it as static JSON under `history/`. The browser reads it same-origin. To add a symbol, add its Yahoo ticker to the list and push. Locally, run `npm run history` once to populate `public/history/`.
+2. **Binance** (`data-api.binance.vision`): public, keyless and CORS-enabled, so any listed crypto pair (`BTC-USD`, `DOGE-USD`, `ETHBTC`, ...) is fetched live. History starts in 2017.
+3. **Bundled samples**: if the selected sources fail, the bundled sample for the symbol is shown with a notice.
 
-1. **Local proxy**: on `localhost` (`npm run dev` / `npm run preview`) Vite forwards `/yahoo/...` to Yahoo. Any symbol works.
-2. **Custom proxy**, if configured (see below).
-3. **History snapshot**: symbols in `data/watchlist.json`, downloaded at build time and served as static files. To add one, add its Yahoo symbol to the list and push.
-4. **Public proxies** (allorigins, corsproxy.io, codetabs), raced in parallel. They are rate-limited and often down.
-
-If every source fails, the app falls back to the saved copy in IndexedDB, then to the bundled sample, and shows a notice. Requests use an explicit `period1`/`period2` window because Yahoo silently returns monthly bars for `range=max`.
-
-For reliable access, deploy your own proxy and set it under **Connection settings > Custom CORS proxy** as a template like `https://your-worker.workers.dev/?url={url}`. A minimal Cloudflare Worker:
-
-```js
-export default {
-  async fetch(request) {
-    const target = new URL(request.url).searchParams.get('url');
-    if (!target || !target.startsWith('https://query2.finance.yahoo.com/')) {
-      return new Response('Forbidden', { status: 403 });
-    }
-    const upstream = await fetch(target, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    const response = new Response(upstream.body, upstream);
-    response.headers.set('Access-Control-Allow-Origin', '*');
-    return response;
-  },
-};
-```
-
-### Other sources and privacy
-
-Binance (`data-api.binance.vision`) and Alpha Vantage allow cross-origin requests and are called directly. The Alpha Vantage key and proxy template are stored only in `localStorage`; saved histories live in IndexedDB (database `backtest-terminal`). Nothing leaves the device except requests to the data sources.
-
-### Local history database
-
-- Fetches repeated within an hour open from the database with no network request.
-- Later fetches download only new bars plus a short overlap. If the overlap shows re-adjusted prices (a split), the full history is downloaded again.
-- On network failure the saved copy is shown, so a ticker fetched once keeps working offline.
+`Auto` tries the snapshot first and, for crypto symbols, falls back to Binance. Data is daily; weekly and monthly bars are aggregated in the browser. Nothing is saved: each fetch downloads the data again, and only the UI preferences (language, strategy parameters, chart settings) are kept in `localStorage`. Nothing leaves the device except the requests to the site and to Binance.
 
 ### CSV format
 

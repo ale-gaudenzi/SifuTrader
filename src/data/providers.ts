@@ -1,40 +1,27 @@
 /**
- * Market data providers usable directly from the browser.
+ * Market data sources usable directly from the browser, with no proxy and
+ * nothing stored locally: every load goes to the network.
  *
- * - Yahoo Finance chart API: broad coverage (equities, ETFs, indices, FX,
- *   crypto) but no CORS headers. Sources, in order of preference:
- *   - the same-origin proxy of the Vite dev/preview server (localhost only);
- *   - a user-supplied CORS proxy;
- *   - the history snapshot published with the site (`public/history`, built
- *     server-side by `scripts/build-history.mjs` for the watchlist symbols);
- *   - public CORS proxies (often rate-limited or down).
+ * - Site snapshot: full daily Yahoo Finance history of the symbols in
+ *   `data/watchlist.json`, downloaded server-side by
+ *   `scripts/build-history.mjs` at deploy time and served as static files
+ *   (`public/history`). Same-origin, so no CORS issue.
  * - Binance public market data: crypto spot pairs, keyless and CORS-enabled.
- * - Alpha Vantage: equities with a free user API key, CORS-enabled.
  * - Bundled samples: static CSV files shipped in `public/sample_data`, used
- *   on first load and as a fallback when every network source fails.
+ *   on first load and as a fallback when the network sources fail.
  */
 import type { Bar } from '../engine/types';
 import { parseOhlcvCsv } from './csv';
 
-export type DataSource = 'auto' | 'yahoo' | 'binance' | 'alphavantage';
+export type DataSource = 'auto' | 'snapshot' | 'binance';
 export type FetchRange = '1y' | '2y' | '5y' | '10y' | 'max';
-export type FetchInterval = '1d' | '1wk';
-/** Concrete origin of a dataset, used to refresh it from the same place later. */
-export type ProviderId = 'yahoo' | 'binance' | 'alphavantage' | 'sample' | 'csv';
+/** Concrete origin of a dataset. */
+export type ProviderId = 'snapshot' | 'binance' | 'sample' | 'csv';
 
 export interface FetchRequest {
   symbol: string;
   source: DataSource;
   range: FetchRange;
-  interval: FetchInterval;
-  alphaVantageKey?: string;
-  /** Proxy URL template; `{url}` is replaced by the encoded target URL. */
-  customProxy?: string;
-  /**
-   * Incremental fetch: only bars from this time (epoch seconds) onwards are
-   * requested and `range` is ignored. No bundled-sample fallback is applied.
-   */
-  since?: number;
 }
 
 export interface Dataset {
@@ -44,8 +31,6 @@ export interface Dataset {
   /** Human-readable description of where the data came from. */
   source: string;
   provider: ProviderId;
-  /** Key of the saved copy in the local database, if any. */
-  storeKey?: string;
   /** Informational message, e.g. a fallback notice. */
   notice?: string;
   warnings: string[];
@@ -60,10 +45,8 @@ export interface SampleInfo {
 
 const SECONDS_PER_DAY = 86_400;
 const REQUEST_TIMEOUT_MS = 12_000;
-/** Public proxies can be slow on multi-year histories. */
-const PROXY_TIMEOUT_MS = 45_000;
-/** 1900-01-01, the `period1` used to request a full Yahoo history. */
-const YAHOO_EARLIEST = -2_208_988_800;
+/** Snapshot files of long-lived indices reach a few hundred kilobytes. */
+const SNAPSHOT_TIMEOUT_MS = 30_000;
 
 /* -------------------------------------------------------------------------- */
 /* Utilities                                                                  */
@@ -127,93 +110,7 @@ function sanitize(bars: Bar[]): Bar[] {
 }
 
 /* -------------------------------------------------------------------------- */
-/* CORS proxies                                                               */
-/* -------------------------------------------------------------------------- */
-
-interface CorsProxy {
-  name: string;
-  build(target: string): string;
-  /** Extracts the upstream response body from the proxy response. */
-  unwrap(res: Response): Promise<string>;
-}
-
-const asText = (res: Response): Promise<string> => res.text();
-
-export const PUBLIC_PROXIES: readonly CorsProxy[] = [
-  {
-    name: 'allorigins (json)',
-    build: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
-    unwrap: async (res) => {
-      const body: unknown = await res.json();
-      if (!isObject(body) || typeof body.contents !== 'string') throw new Error('unexpected proxy payload');
-      return body.contents;
-    },
-  },
-  { name: 'allorigins (raw)', build: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, unwrap: asText },
-  { name: 'corsproxy.io', build: (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`, unwrap: asText },
-  { name: 'codetabs', build: (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`, unwrap: asText },
-];
-
-/** Same-origin Yahoo proxy configured in `vite.config.ts` for `vite` and `vite preview`. */
-const LOCAL_PROXY: CorsProxy = {
-  name: 'local dev proxy',
-  build: (u) => u.replace(/^https:\/\/query[12]\.finance\.yahoo\.com\//, `${import.meta.env.BASE_URL}yahoo/`),
-  unwrap: asText,
-};
-
-function onLocalDevServer(): boolean {
-  return typeof location !== 'undefined' && ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
-}
-
-function customProxy(template: string): CorsProxy {
-  return {
-    name: 'custom proxy',
-    build: (u) => (template.includes('{url}') ? template.replace('{url}', encodeURIComponent(u)) : template + u),
-    unwrap: asText,
-  };
-}
-
-/**
- * Queries every proxy concurrently and resolves with the first response that
- * `parse` accepts; the remaining requests are aborted. Public proxies vary
- * widely in latency and availability, so racing them is both faster and more
- * reliable than trying them one after another.
- */
-async function fetchViaProxies<T>(
-  target: string,
-  parse: (body: string) => T,
-  signal: AbortSignal | undefined,
-  chain: readonly CorsProxy[],
-): Promise<{ value: T; proxy: string }> {
-  const race = new AbortController();
-  const onAbort = (): void => race.abort();
-  signal?.addEventListener('abort', onAbort, { once: true });
-  const failures: string[] = [];
-  try {
-    return await Promise.any(
-      chain.map(async (proxy) => {
-        try {
-          const res = await fetchWithTimeout(proxy.build(target), race.signal, PROXY_TIMEOUT_MS);
-          const value = parse(await proxy.unwrap(res));
-          race.abort();
-          return { value, proxy: proxy.name };
-        } catch (e) {
-          failures.push(`${proxy.name}: ${errorMessage(e)}`);
-          throw e;
-        }
-      }),
-    );
-  } catch (e) {
-    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    if (e instanceof AggregateError) throw new Error(`All CORS proxies failed (${failures.join(' | ')})`);
-    throw e;
-  } finally {
-    signal?.removeEventListener('abort', onAbort);
-  }
-}
-
-/* -------------------------------------------------------------------------- */
-/* Yahoo Finance                                                              */
+/* Yahoo chart payload (format of the snapshot files)                         */
 /* -------------------------------------------------------------------------- */
 
 interface YahooParsed {
@@ -221,7 +118,7 @@ interface YahooParsed {
   name: string;
 }
 
-/** Parses a Yahoo Finance v8 chart response. Exported for unit testing. */
+/** Parses a Yahoo Finance v8 chart payload. Exported for unit testing. */
 export function parseYahooChart(body: string): YahooParsed {
   let json: unknown;
   try {
@@ -304,67 +201,21 @@ export function loadSnapshotIndex(): Promise<SnapshotIndex | null> {
 
 async function fetchSnapshot(req: FetchRequest, signal?: AbortSignal): Promise<Dataset> {
   const symbol = req.symbol.trim().toUpperCase();
-  if (req.interval !== '1d') throw new Error('snapshot holds daily bars only');
   const entry = (await loadSnapshotIndex())?.symbols[symbol];
-  if (!entry) throw new Error(`${symbol} is not in the history snapshot`);
-  const res = await fetchWithTimeout(`${import.meta.env.BASE_URL}history/${entry.file}`, signal, PROXY_TIMEOUT_MS);
+  if (!entry) throw new Error(`${symbol} is not in the site snapshot`);
+  const res = await fetchWithTimeout(`${import.meta.env.BASE_URL}history/${entry.file}`, signal, SNAPSHOT_TIMEOUT_MS);
   const parsed = parseYahooChart(await res.text());
-  const start = req.since ?? rangeStartSeconds(req.range);
+  const start = rangeStartSeconds(req.range);
   const bars = parsed.bars.filter((b) => b.time >= start);
-  if (bars.length < (req.since === undefined ? 2 : 1)) throw new Error(`no snapshot bars after ${entry.last}`);
+  if (bars.length < 2) throw new Error(`no snapshot bars in the selected range`);
   return {
     symbol,
     name: parsed.name || entry.name || symbol,
     bars,
     source: `Yahoo Finance (site snapshot, ${entry.last})`,
-    provider: 'yahoo',
+    provider: 'snapshot',
     warnings: [],
   };
-}
-
-async function fetchYahooLive(req: FetchRequest, chain: readonly CorsProxy[], signal?: AbortSignal): Promise<Dataset> {
-  const symbol = req.symbol.trim().toUpperCase();
-  // An explicit period rather than `range=`: Yahoo silently degrades `range=max` to monthly or quarterly bars.
-  // For `max`, start in 1900: Yahoo accepts negative epochs and indices go back to the 1920s.
-  const period1 = Math.floor(req.since ?? (req.range === 'max' ? YAHOO_EARLIEST : rangeStartSeconds(req.range)));
-  const window = `period1=${period1}&period2=${Math.floor(Date.now() / 1000) + SECONDS_PER_DAY}`;
-  const target =
-    `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
-    `?${window}&interval=${req.interval}&includePrePost=false&events=div%2Csplits`;
-  const { value, proxy } = await fetchViaProxies(target, parseYahooChart, signal, chain);
-  if (value.bars.length < (req.since === undefined ? 2 : 1)) throw new Error('not enough bars returned');
-  return {
-    symbol,
-    name: value.name || symbol,
-    bars: value.bars,
-    source: `Yahoo Finance via ${proxy}`,
-    provider: 'yahoo',
-    warnings: [],
-  };
-}
-
-/**
- * Yahoo with a private route (local dev proxy or custom proxy) goes live first
- * and falls back to the snapshot. Without one, the snapshot is preferred to
- * the unreliable public proxies.
- */
-async function fetchYahoo(req: FetchRequest, signal?: AbortSignal): Promise<Dataset> {
-  const custom = req.customProxy?.trim();
-  const privateChain = [...(onLocalDevServer() ? [LOCAL_PROXY] : []), ...(custom ? [customProxy(custom)] : [])];
-  const attempts: Array<() => Promise<Dataset>> =
-    privateChain.length > 0
-      ? [() => fetchYahooLive(req, [...privateChain, ...PUBLIC_PROXIES], signal), () => fetchSnapshot(req, signal)]
-      : [() => fetchSnapshot(req, signal), () => fetchYahooLive(req, PUBLIC_PROXIES, signal)];
-  const failures: string[] = [];
-  for (const attempt of attempts) {
-    try {
-      return await attempt();
-    } catch (e) {
-      if (signal?.aborted) throw e;
-      failures.push(errorMessage(e));
-    }
-  }
-  throw new Error(failures.join('; '));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -399,16 +250,15 @@ export function looksLikeCrypto(symbol: string): boolean {
 
 async function fetchBinance(req: FetchRequest, signal?: AbortSignal): Promise<Dataset> {
   const pair = toBinanceSymbol(req.symbol);
-  const interval = req.interval === '1wk' ? '1w' : '1d';
   const limit = 1000;
-  let startMs = (req.since ?? rangeStartSeconds(req.range)) * 1000;
+  let startMs = rangeStartSeconds(req.range) * 1000;
   const nowMs = Date.now();
   const bars: Bar[] = [];
 
   for (let page = 0; page < 50; page++) {
     const url =
       `https://data-api.binance.vision/api/v3/klines?symbol=${encodeURIComponent(pair)}` +
-      `&interval=${interval}&limit=${limit}&startTime=${startMs}`;
+      `&interval=1d&limit=${limit}&startTime=${startMs}`;
     let res: Response;
     try {
       res = await fetchWithTimeout(url, signal);
@@ -439,70 +289,8 @@ async function fetchBinance(req: FetchRequest, signal?: AbortSignal): Promise<Da
   }
 
   const clean = sanitize(bars);
-  if (clean.length < (req.since === undefined ? 2 : 1)) throw new Error(`Binance ${pair}: no data (is the pair listed?)`);
+  if (clean.length < 2) throw new Error(`Binance ${pair}: no data (is the pair listed?)`);
   return { symbol: pair, name: pair, bars: clean, source: 'Binance public market data', provider: 'binance', warnings: [] };
-}
-
-/* -------------------------------------------------------------------------- */
-/* Alpha Vantage                                                              */
-/* -------------------------------------------------------------------------- */
-
-/** Parses an Alpha Vantage TIME_SERIES_* response. Exported for unit testing. */
-export function parseAlphaVantage(json: unknown): Bar[] {
-  if (!isObject(json)) throw new Error('unexpected response');
-  for (const key of ['Error Message', 'Note', 'Information']) {
-    if (typeof json[key] === 'string') throw new Error(json[key] as string);
-  }
-  const seriesKey = Object.keys(json).find((k) => k.toLowerCase().includes('time series'));
-  const series = seriesKey ? json[seriesKey] : null;
-  if (!isObject(series)) throw new Error('no time series in response');
-  const bars: Bar[] = [];
-  for (const [date, raw] of Object.entries(series)) {
-    if (!isObject(raw)) continue;
-    const time = Date.parse(`${date}T00:00:00Z`) / 1000;
-    if (!Number.isFinite(time)) continue;
-    bars.push({
-      time,
-      open: Number(raw['1. open']),
-      high: Number(raw['2. high']),
-      low: Number(raw['3. low']),
-      close: Number(raw['4. close']),
-      volume: Number(raw['5. volume'] ?? 0),
-    });
-  }
-  return sanitize(bars);
-}
-
-async function fetchAlphaVantage(req: FetchRequest, signal?: AbortSignal): Promise<Dataset> {
-  const key = req.alphaVantageKey?.trim();
-  if (!key) throw new Error('Alpha Vantage requires an API key (free at alphavantage.co).');
-  const symbol = req.symbol.trim().toUpperCase();
-  const fn = req.interval === '1wk' ? 'TIME_SERIES_WEEKLY' : 'TIME_SERIES_DAILY';
-  const base = `https://www.alphavantage.co/query?function=${fn}&symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`;
-  const warnings: string[] = [];
-
-  const load = async (url: string): Promise<Bar[]> => parseAlphaVantage(await (await fetchWithTimeout(url, signal)).json());
-  let bars: Bar[];
-  // The compact output (latest 100 sessions) is enough for a short incremental update.
-  const compactSuffices = req.since !== undefined && req.since > Date.now() / 1000 - 120 * SECONDS_PER_DAY;
-  if (fn === 'TIME_SERIES_DAILY' && compactSuffices) {
-    bars = await load(`${base}&outputsize=compact`);
-  } else if (fn === 'TIME_SERIES_DAILY') {
-    try {
-      bars = await load(`${base}&outputsize=full`);
-    } catch {
-      // Full daily history is a premium feature on some plans; fall back to
-      // the most recent 100 sessions.
-      bars = await load(`${base}&outputsize=compact`);
-      warnings.push('Alpha Vantage returned the compact daily history (latest 100 sessions).');
-    }
-  } else {
-    bars = await load(base);
-  }
-  const start = req.since ?? rangeStartSeconds(req.range);
-  bars = bars.filter((b) => b.time >= start);
-  if (bars.length < (req.since === undefined ? 2 : 1)) throw new Error('not enough bars returned');
-  return { symbol, name: symbol, bars, source: 'Alpha Vantage', provider: 'alphavantage', warnings };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -566,33 +354,28 @@ async function findSampleFor(symbol: string): Promise<SampleInfo | undefined> {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Fetches OHLCV data according to `req.source`. With `auto`, crypto symbols
- * are routed to Binance first and everything else to Yahoo (then Alpha
- * Vantage when a key is configured). If every network attempt fails and a
- * bundled sample exists for the symbol, the sample is returned with a notice.
+ * Fetches daily OHLCV bars according to `req.source`. With `auto`, symbols in
+ * the site snapshot load from it and crypto symbols fall through to Binance.
+ * If every attempt fails and a bundled sample exists for the symbol, the
+ * sample is returned with a notice.
  */
 export async function fetchMarketData(req: FetchRequest, signal?: AbortSignal): Promise<Dataset> {
   if (!req.symbol.trim()) throw new Error('Enter a ticker symbol.');
 
   type Attempt = { label: string; run: () => Promise<Dataset> };
-  const yahoo: Attempt = { label: 'Yahoo', run: () => fetchYahoo(req, signal) };
+  const snapshot: Attempt = { label: 'Snapshot', run: () => fetchSnapshot(req, signal) };
   const binance: Attempt = { label: 'Binance', run: () => fetchBinance(req, signal) };
-  const alpha: Attempt = { label: 'Alpha Vantage', run: () => fetchAlphaVantage(req, signal) };
 
   let attempts: Attempt[];
   switch (req.source) {
-    case 'yahoo':
-      attempts = [yahoo];
+    case 'snapshot':
+      attempts = [snapshot];
       break;
     case 'binance':
       attempts = [binance];
       break;
-    case 'alphavantage':
-      attempts = [alpha];
-      break;
     case 'auto':
-      attempts = looksLikeCrypto(req.symbol) ? [binance, yahoo] : [yahoo];
-      if (req.alphaVantageKey?.trim() && !looksLikeCrypto(req.symbol)) attempts.push(alpha);
+      attempts = looksLikeCrypto(req.symbol) ? [snapshot, binance] : [snapshot];
       break;
   }
 
@@ -606,7 +389,6 @@ export async function fetchMarketData(req: FetchRequest, signal?: AbortSignal): 
     }
   }
 
-  if (req.since !== undefined) throw new Error(failures.join(' / '));
   const sample = await findSampleFor(req.symbol);
   if (sample) {
     const data = await loadSample(sample.symbol);

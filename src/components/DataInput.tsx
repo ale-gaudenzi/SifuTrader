@@ -1,41 +1,31 @@
 /**
- * Data source panel: bundled samples, online ticker fetch, the library of
- * saved tickers and CSV upload. Fetched tickers and uploaded files are saved
- * in the local database (see `data/history.ts`).
+ * Data source panel: bundled samples, online ticker fetch and CSV upload.
+ * Nothing is stored: every fetch goes to the network (see `data/providers.ts`).
  */
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react';
 import { CsvParseError, parseCsvFile } from '../data/csv';
-import { loadTicker, openSaved, refreshSaved, saveFile, type LoadResult } from '../data/history';
 import {
+  fetchMarketData,
   loadSample,
   loadSampleManifest,
   loadSnapshotIndex,
   type DataSource,
   type Dataset,
-  type FetchInterval,
   type FetchRange,
   type SampleInfo,
 } from '../data/providers';
-import type { SeriesMeta } from '../data/store';
-import { formatAgo } from '../format';
 import { isBoolean, isOneOf, isString, usePersistentState } from '../hooks/usePersistentState';
-import { useSavedSeries } from '../hooks/useSavedSeries';
 import { useI18n, type MessageKey } from '../i18n';
 import CollapsibleHeader from './CollapsibleHeader';
-import SavedTickers from './SavedTickers';
 
 const SOURCES: ReadonlyArray<{ value: DataSource; label: MessageKey }> = [
   { value: 'auto', label: 'data.src.auto' },
-  { value: 'yahoo', label: 'data.src.yahoo' },
+  { value: 'snapshot', label: 'data.src.snapshot' },
   { value: 'binance', label: 'data.src.binance' },
-  { value: 'alphavantage', label: 'data.src.alphavantage' },
 ];
 const RANGES: readonly FetchRange[] = ['1y', '2y', '5y', '10y', 'max'];
-const INTERVALS: ReadonlyArray<{ value: FetchInterval; label: MessageKey }> = [
-  { value: '1d', label: 'data.int.1d' },
-  { value: '1wk', label: 'data.int.1wk' },
-];
-const SUGGESTIONS = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'TSLA', 'SPY', 'QQQ', 'BTC-USD', 'ETH-USD', 'SOL-USD', 'EURUSD=X', '^GSPC'];
+/** Crypto pairs offered next to the snapshot symbols; any Binance pair works. */
+const CRYPTO_SUGGESTIONS = ['BNB-USD', 'XRP-USD', 'DOGE-USD', 'ADA-USD', 'AVAX-USD', 'LINK-USD'];
 
 type Status =
   | { kind: 'idle' }
@@ -55,25 +45,18 @@ export interface DataInputProps {
   onDataset: (dataset: Dataset) => void;
   /** Symbol of the dataset currently displayed. */
   activeSymbol: string | null;
-  /** Library key of the dataset currently displayed, if it is saved. */
-  activeKey: string | null;
   /** Bundled sample loaded on first render. */
   initialSample: string;
 }
 
-export default function DataInput({ onDataset, activeSymbol, activeKey, initialSample }: DataInputProps) {
-  const { t, locale } = useI18n();
-  const library = useSavedSeries();
+export default function DataInput({ onDataset, activeSymbol, initialSample }: DataInputProps) {
+  const { t } = useI18n();
   const [samples, setSamples] = useState<SampleInfo[]>([]);
   const [snapshotSymbols, setSnapshotSymbols] = useState<string[]>([]);
   const [symbol, setSymbol] = usePersistentState('fetch.symbol', 'AAPL', isString);
   const [source, setSource] = usePersistentState<DataSource>('fetch.source', 'auto', isOneOf(SOURCES.map((s) => s.value)));
   const [range, setRange] = usePersistentState<FetchRange>('fetch.range', '5y', isOneOf(RANGES));
-  const [interval, setFetchInterval] = usePersistentState<FetchInterval>('fetch.interval', '1d', isOneOf(INTERVALS.map((i) => i.value)));
-  const [avKey, setAvKey] = usePersistentState('fetch.alphaVantageKey', '', isString);
-  const [proxy, setProxy] = usePersistentState('fetch.customProxy', '', isString);
   const [open, setOpen] = usePersistentState('ui.dataOpen', true, isBoolean);
-  const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
   const [warnings, setWarnings] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -86,19 +69,6 @@ export default function DataInput({ onDataset, activeSymbol, activeKey, initialS
     warnings: dataset.warnings,
     status: dataset.notice ? { kind: 'info', message: dataset.notice } : { kind: 'idle' },
   });
-
-  /** Turns a library load into the dataset plus a status line explaining where the bars came from. */
-  const describe = (r: LoadResult, show: boolean): Outcome => {
-    const s = r.dataset.symbol;
-    const when = formatAgo(r.fetchedAt, locale);
-    let status: Status;
-    if (r.dataset.notice) status = { kind: 'info', message: r.dataset.notice };
-    else if (r.status === 'offline') status = { kind: 'info', message: t('data.st.offline', { s, when, msg: r.error ?? '' }) };
-    else if (r.status === 'cached') status = { kind: 'ok', message: t('data.st.cached', { s, when }) };
-    else if (r.status === 'updated') status = { kind: 'ok', message: r.added > 0 ? t('data.st.updated', { s, n: r.added }) : t('data.st.upToDate', { s }) };
-    else status = { kind: 'ok', message: t(r.dataset.storeKey ? 'data.st.fetched' : 'data.st.fetchedUnsaved', { s, n: r.dataset.bars.length }) };
-    return { dataset: show ? r.dataset : undefined, status, warnings: r.dataset.warnings };
-  };
 
   const run = async (label: string, task: (signal: AbortSignal) => Promise<Outcome>): Promise<void> => {
     abortRef.current?.abort();
@@ -121,39 +91,6 @@ export default function DataInput({ onDataset, activeSymbol, activeKey, initialS
   };
 
   const openSample = (s: string): Promise<void> => run(t('data.loadingSample', { s }), async () => deliver(await loadSample(s)));
-  const settings = { alphaVantageKey: avKey, customProxy: proxy };
-
-  const onOpenSaved = (meta: SeriesMeta): void => {
-    void run(t('data.opening', { s: meta.symbol }), async () => ({ ...deliver(await openSaved(meta.key)), status: { kind: 'idle' } }));
-  };
-
-  const onRefreshSaved = (meta: SeriesMeta): void => {
-    void run(t('data.fetching', { s: meta.symbol }), async (signal) => describe(await refreshSaved(meta, settings, signal), meta.key === activeKey));
-  };
-
-  const onRefreshAll = (metas: SeriesMeta[]): void => {
-    void run(t('data.updatingAll', { i: 1, n: metas.length, s: metas[0].symbol }), async (signal) => {
-      const failures: string[] = [];
-      let active: Dataset | undefined;
-      for (const [i, meta] of metas.entries()) {
-        if (signal.aborted) break;
-        setStatus({ kind: 'loading', message: t('data.updatingAll', { i: i + 1, n: metas.length, s: meta.symbol }) });
-        try {
-          const r = await refreshSaved(meta, settings, signal);
-          if (r.status === 'offline') failures.push(`${meta.symbol}: ${r.error ?? ''}`);
-          if (meta.key === activeKey) active = r.dataset;
-        } catch (e) {
-          if (signal.aborted) throw e;
-          failures.push(`${meta.symbol}: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-      return {
-        dataset: active,
-        status: { kind: failures.length > 0 ? 'info' : 'ok', message: t('data.updatedAll', { ok: metas.length - failures.length, n: metas.length }) },
-        warnings: failures,
-      };
-    });
-  };
 
   // Load the manifest and the default sample once so the app works offline out of the box.
   useEffect(() => {
@@ -173,11 +110,13 @@ export default function DataInput({ onDataset, activeSymbol, activeKey, initialS
     if (!s) return;
     void run(t('data.fetching', { s: s.toUpperCase() }), async (signal) => {
       try {
-        return describe(await loadTicker({ symbol: s, source, range, interval, ...settings }, signal), true);
+        const dataset = await fetchMarketData({ symbol: s, source, range }, signal);
+        const outcome = deliver(dataset);
+        return dataset.notice ? outcome : { ...outcome, status: { kind: 'ok', message: t('data.st.fetched', { s: dataset.symbol, n: dataset.bars.length }) } };
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        // Yahoo unreachable: point to the two reliable routes.
-        throw new Error(message.includes('CORS proxies failed') ? `${message} ${t('data.hintYahoo')}` : message);
+        // Not in the snapshot: explain how to make the symbol available.
+        throw new Error(message.includes('not in the site snapshot') ? `${message}. ${t('data.hintSnapshot')}` : message);
       }
     });
   };
@@ -196,7 +135,7 @@ export default function DataInput({ onDataset, activeSymbol, activeKey, initialS
           provider: 'csv',
           warnings: parsed.warnings,
         };
-        return deliver(await saveFile(dataset, file.name));
+        return deliver(dataset);
       } catch (e) {
         if (e instanceof CsvParseError) throw new Error(`${file.name}: ${e.message}`);
         throw e;
@@ -252,7 +191,7 @@ export default function DataInput({ onDataset, activeSymbol, activeKey, initialS
               onChange={(e) => setSymbol(e.target.value)}
             />
             <datalist id="ticker-suggestions">
-              {[...new Set([...library.items.filter((m) => m.provider !== 'csv').map((m) => m.query), ...snapshotSymbols, ...SUGGESTIONS])].map((s) => (
+              {[...new Set([...snapshotSymbols, ...CRYPTO_SUGGESTIONS])].map((s) => (
                 <option key={s} value={s} />
               ))}
             </datalist>
@@ -260,7 +199,7 @@ export default function DataInput({ onDataset, activeSymbol, activeKey, initialS
               {t('data.fetch')}
             </button>
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-2 gap-1.5">
             <select className="input text-xs" aria-label={t('data.source')} value={source} onChange={(e) => setSource(e.target.value as DataSource)}>
               {SOURCES.map((s) => (
                 <option key={s.value} value={s.value}>
@@ -275,64 +214,9 @@ export default function DataInput({ onDataset, activeSymbol, activeKey, initialS
                 </option>
               ))}
             </select>
-            <select className="input text-xs" aria-label={t('data.interval')} value={interval} onChange={(e) => setFetchInterval(e.target.value as FetchInterval)}>
-              {INTERVALS.map((i) => (
-                <option key={i.value} value={i.value}>
-                  {t(i.label)}
-                </option>
-              ))}
-            </select>
           </div>
-          <button type="button" className="text-[11px] text-terminal-faint hover:text-terminal-muted" onClick={() => setShowSettings((v) => !v)}>
-            {showSettings ? '\u25BE' : '\u25B8'} {t('data.settings')}
-          </button>
-          {showSettings && (
-            <div className="space-y-2 rounded border border-terminal-border bg-terminal-bg/60 p-2">
-              <div>
-                <label className="field-label" htmlFor="av-key">
-                  {t('data.avKey')}
-                </label>
-                <input
-                  id="av-key"
-                  className="input text-xs"
-                  type="password"
-                  value={avKey}
-                  placeholder={t('data.optional')}
-                  autoComplete="off"
-                  onChange={(e) => setAvKey(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="field-label" htmlFor="proxy">
-                  {t('data.proxy')}
-                </label>
-                <input
-                  id="proxy"
-                  className="input text-xs"
-                  value={proxy}
-                  placeholder="https://my-proxy.example/?url={url}"
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(e) => setProxy(e.target.value)}
-                />
-              </div>
-              <p className="text-[11px] leading-snug text-terminal-faint">
-                {t('data.settingsNote')}
-              </p>
-            </div>
-          )}
+          <p className="text-[11px] leading-snug text-terminal-faint">{t('data.note')}</p>
         </form>
-
-        {/* Saved tickers */}
-        <SavedTickers
-          items={library.items}
-          available={library.available}
-          activeKey={activeKey}
-          busy={loading}
-          onOpen={onOpenSaved}
-          onRefresh={onRefreshSaved}
-          onRefreshAll={onRefreshAll}
-        />
 
         {/* CSV upload */}
         <div>

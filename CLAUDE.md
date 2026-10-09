@@ -4,16 +4,16 @@ Guidance for Claude Code when working in this repository.
 
 ## Project
 
-SifuTrader is a zero-backend charting and backtesting SPA: React 19, TypeScript (strict), Vite, Tailwind CSS 4, Lightweight Charts 5, PapaParse. Everything runs in the browser and the build is a folder of static files deployed to GitHub Pages. There is no server, no database other than the browser's IndexedDB, and no secrets in the repo.
+SifuTrader is a zero-backend charting and backtesting SPA: React 19, TypeScript (strict), Vite, Tailwind CSS 4, Lightweight Charts 5, PapaParse. Everything runs in the browser and the build is a folder of static files deployed to GitHub Pages. There is no server, no database, no API keys and no secrets in the repo. Market data is never stored: it is fetched on demand and kept in memory.
 
 ## Commands
 
 ```bash
-npm run dev        # dev server on http://localhost:5173 (includes the /yahoo proxy)
+npm run dev        # dev server on http://localhost:5173
 npm test           # Vitest, all src/**/*.test.ts
 npm run typecheck  # tsc -b over app, tests and vite config
 npm run build      # typecheck + production build into dist/
-npm run history    # download the watchlist snapshot into public/history/ (network)
+npm run history    # download the watchlist snapshot into public/history/ (network; needed for Yahoo symbols in dev)
 ```
 
 Node 22.12+ is required (see `.nvmrc`). Before calling a change done, run `npm test` and `npm run build`; both must pass with no TypeScript errors.
@@ -25,7 +25,7 @@ Layers, with dependencies pointing only downward:
 ```text
 components/, App.tsx     React UI
 hooks/, i18n.tsx         UI state, persistence, localization
-data/                    CSV parsing, providers, IndexedDB store, cache-first loading
+data/                    CSV parsing, data providers (snapshot, Binance, samples)
 strategies/              Strategy implementations + registry
 engine/                  Types, backtester, indicators, metrics (pure TS)
 ```
@@ -52,15 +52,15 @@ engine/                  Types, backtester, indicators, metrics (pure TS)
 
 **UI strings**: never hard-code user-facing text in components. Add a key to both the `en` and `it` dictionaries in `src/i18n.tsx` and use `t(key, vars)`. The `Messages` type makes a missing Italian key a type error.
 
-**Data providers**: network code lives in `src/data/providers.ts`; caching and incremental updates in `src/data/history.ts`. Every network path needs a fallback (saved copy, then bundled sample) and must never throw unhandled into the UI.
+**Data providers**: all network code lives in `src/data/providers.ts`. Sources are limited to what works from a static site without a proxy or key: the same-origin history snapshot (`public/history/`, built from `data/watchlist.json` by `scripts/build-history.mjs` in CI) and Binance. Nothing is persisted. Every network path falls back to the bundled sample and must never throw unhandled into the UI.
 
 ## Conventions
 
 - TypeScript strict, no `any`, no non-null assertions to silence the compiler. `verbatimModuleSyntax` is on: use `import type` for type-only imports.
 - Match the surrounding code: short JSDoc on exported functions and types explaining *why*, not *what*. Comments and identifiers in English.
-- Tests sit next to the code (`*.test.ts`) and run in Node. Use `fake-indexeddb` for store tests. Compare floats with `toBeCloseTo`.
+- Tests sit next to the code (`*.test.ts`) and run in Node. Compare floats with `toBeCloseTo`.
 - Static assets are loaded via `import.meta.env.BASE_URL` (the build uses `base: './'`). Never use absolute `/path` URLs: they break on GitHub Pages sub-paths.
-- Browser storage keys are prefixed `backtest-terminal` (localStorage prefix and IndexedDB name). Changing them wipes users' saved data; bump `DB_VERSION` with a migration instead.
+- UI preferences live in `localStorage` under the `backtest-terminal:` prefix (`usePersistentState`). Changing the prefix resets users' settings.
 - Keep dependencies minimal. Ask before adding a runtime dependency.
 
 ## Generated and untracked files

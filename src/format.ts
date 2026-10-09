@@ -62,22 +62,3 @@ export function signClass(value: number): string {
   if (value < 0) return 'text-down';
   return 'text-terminal-muted';
 }
-
-const RELATIVE_FMTS = new Map<string, Intl.RelativeTimeFormat>();
-
-/** "5 minutes ago", "yesterday", ... for an epoch-milliseconds timestamp. */
-export function formatAgo(timeMs: number, locale = 'en-US', nowMs = Date.now()): string {
-  let fmt = RELATIVE_FMTS.get(locale);
-  if (!fmt) {
-    fmt = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'narrow' });
-    RELATIVE_FMTS.set(locale, fmt);
-  }
-  const seconds = Math.round((timeMs - nowMs) / 1000);
-  const abs = Math.abs(seconds);
-  if (abs < 60) return fmt.format(0, 'second');
-  if (abs < 3600) return fmt.format(Math.round(seconds / 60), 'minute');
-  if (abs < 86_400) return fmt.format(Math.round(seconds / 3600), 'hour');
-  if (abs < 30 * 86_400) return fmt.format(Math.round(seconds / 86_400), 'day');
-  if (abs < 365 * 86_400) return fmt.format(Math.round(seconds / (30 * 86_400)), 'month');
-  return fmt.format(Math.round(seconds / (365 * 86_400)), 'year');
-}
