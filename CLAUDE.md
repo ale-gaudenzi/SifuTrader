@@ -6,7 +6,7 @@ Guidance for Claude Code when working in this repository.
 
 ## Project
 
-SifuTrader is a zero-backend charting and backtesting SPA: React 19, TypeScript (strict), Vite, Tailwind CSS 4, Lightweight Charts 5, PapaParse. Everything runs in the browser and the build is a folder of static files deployed to GitHub Pages. There is no server, no database, no API keys and no secrets in the repo. Market data is never stored: it is fetched on demand and kept in memory.
+SifuTrader is a zero-backend charting and backtesting SPA: React 19, TypeScript (strict), Vite, Tailwind CSS 4, Lightweight Charts 5, PapaParse. Everything runs in the browser and the build is a folder of static files served by a Cloudflare Worker with static assets (`wrangler.jsonc`), kept private by Cloudflare Access. There is no server, no database, no API keys and no secrets in the repo. Market data is never stored: it is fetched on demand and kept in memory.
 
 ## Commands
 
@@ -15,6 +15,7 @@ npm run dev        # dev server on http://localhost:5173
 npm test           # Vitest, all src/**/*.test.ts
 npm run typecheck  # tsc -b over app, tests and vite config
 npm run build      # typecheck + production build into dist/
+npm run deploy     # build + wrangler deploy (CI deploys on push to main)
 npm run history    # download the watchlist snapshot into public/history/ (network; needed for Yahoo symbols in dev)
 npm run fundamentals  # download the fundamentals snapshot into public/fundamentals/ (network; needed for the Fundamentals view in dev)
 ```
@@ -62,7 +63,7 @@ engine/                  Types, backtester, indicators, metrics (pure TS)
 - TypeScript strict, no `any`, no non-null assertions to silence the compiler. `verbatimModuleSyntax` is on: use `import type` for type-only imports.
 - Match the surrounding code: short JSDoc on exported functions and types explaining *why*, not *what*. Comments and identifiers in English.
 - Tests sit next to the code (`*.test.ts`) and run in Node. Compare floats with `toBeCloseTo`.
-- Static assets are loaded via `import.meta.env.BASE_URL` (the build uses `base: './'`). Never use absolute `/path` URLs: they break on GitHub Pages sub-paths.
+- Static assets are loaded via `import.meta.env.BASE_URL` (the build uses `base: './'`). Never use absolute `/path` URLs: they break when the site is served from a sub-path.
 - UI preferences live in `localStorage` under the `backtest-terminal:` prefix (`usePersistentState`). Changing the prefix resets users' settings.
 - Keep dependencies minimal. Ask before adding a runtime dependency.
 

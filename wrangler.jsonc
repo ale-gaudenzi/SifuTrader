@@ -1,0 +1,14 @@
+// Cloudflare Worker serving the static build. The site is private: Cloudflare
+// Access must be enabled on the workers.dev route (see README).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sifutrader",
+  "compatibility_date": "2026-10-06",
+  "observability": {
+    "enabled": true
+  },
+  // Every version would otherwise get its own public preview hostname.
+  "preview_urls": false,
+  // No `not_found_handling`: a missing snapshot file must be a 404, not index.html.
+  "assets": {}
+}

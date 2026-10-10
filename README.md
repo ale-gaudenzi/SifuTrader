@@ -1,6 +1,6 @@
 # SifuTrader
 
-A zero-backend financial charting and backtesting web app. Data parsing, indicators, simulation and metrics all run in the browser; the build is a folder of static files hosted on GitHub Pages.
+A zero-backend financial charting and backtesting web app. Data parsing, indicators, simulation and metrics all run in the browser; the build is a folder of static files served by a Cloudflare Worker behind Cloudflare Access, so the site is private.
 
 Built with React 19, TypeScript, Vite, Tailwind CSS 4, [Lightweight Charts](https://github.com/tradingview/lightweight-charts) 5 and PapaParse.
 
@@ -43,7 +43,8 @@ npm install
 npm run dev        # http://localhost:5173
 npm test           # unit tests (Vitest)
 npm run build      # type-check and build into dist/
-npm run preview    # serve dist/ locally
+npm run preview    # build and serve dist/ with the local Workers runtime
+npm run deploy     # build and deploy to Cloudflare (needs `npx wrangler login`)
 npm run history    # download the watchlist snapshot into public/history/ (needed to fetch Yahoo symbols locally)
 npm run fundamentals  # download the fundamentals snapshot into public/fundamentals/ (needed for the Fundamentals view locally)
 ```
@@ -51,7 +52,8 @@ npm run fundamentals  # download the fundamentals snapshot into public/fundament
 ## Project structure
 
 ```text
-.github/workflows/deploy.yml   Test, build and deploy to GitHub Pages
+.github/workflows/deploy.yml   Test, build and deploy to Cloudflare
+wrangler.jsonc                 Cloudflare Worker serving the build
 data/watchlist.json            Symbols included in the history snapshot
 scripts/build-history.mjs      Downloads the history snapshot (server-side)
 scripts/build-fundamentals.mjs Downloads the fundamentals snapshot (server-side)
@@ -212,12 +214,15 @@ The sample CSVs in `public/sample_data/` are split-adjusted daily bars from Yaho
 
 ## Deployment
 
-1. Push to GitHub with `main` as the default branch.
-2. In **Settings > Pages > Build and deployment**, set **Source** to **GitHub Actions**.
+The build is served by a Cloudflare Worker with static assets (`wrangler.jsonc`) and kept private with Cloudflare Access. Both are free at this scale. One-time setup:
 
-`.github/workflows/deploy.yml` runs on every push to `main`, on weekdays at 22:30 UTC (to refresh the snapshot) and on demand. It installs dependencies, runs the tests, downloads the history snapshot (a failure there does not block the deploy), builds, and publishes `dist/`.
+1. `npx wrangler login`, then `npm run deploy` once to create the Worker. It is served at `sifutrader.<account>.workers.dev`; per-version preview URLs are disabled in `wrangler.jsonc`.
+2. In the Cloudflare dashboard, open the Worker, go to **Settings > Domains & Routes**, and enable **Cloudflare Access** on the `workers.dev` route. Then, in **Zero Trust > Access > Applications**, restrict the generated application's policy to your own email.
+3. Create an API token from the **Edit Cloudflare Workers** template and add it to the GitHub repository secrets as `CLOUDFLARE_API_TOKEN`, together with `CLOUDFLARE_ACCOUNT_ID`.
 
-`vite.config.ts` sets `base: './'`, so the same build works at `https://<user>.github.io/<repo>/`, at a custom domain, or from any sub-path. There is no client-side router, so no 404 fallback is needed.
+`.github/workflows/deploy.yml` runs on every push to `main`, on weekdays at 22:30 UTC (to refresh the snapshot) and on demand. It installs dependencies, runs the tests, downloads the history and fundamentals snapshots (a failure there does not block the deploy), builds, and deploys with `wrangler deploy`.
+
+`vite.config.ts` sets `base: './'`, so the same build works at a domain root or from any sub-path. There is no client-side router, so no 404 fallback is needed.
 
 ## Limitations
 
