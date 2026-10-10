@@ -90,6 +90,10 @@ function ParamField({ strategyId, spec, value, onChange }: { strategyId: string;
 
 export interface StrategyPanelProps {
   strategies: readonly StrategyDefinition[];
+  /** Strategies made in the builder; they have no form parameters. */
+  customStrategies: readonly StrategyDefinition[];
+  /** Opens the builder on the custom strategy with this id. */
+  onEditCustom: (id: string) => void;
   strategyId: string;
   onStrategyChange: (id: string) => void;
   params: ParamValues;
@@ -126,10 +130,27 @@ export interface PeriodRange {
 }
 
 export default function StrategyPanel(props: StrategyPanelProps) {
-  const { strategies, strategyId, onStrategyChange, params, onParamsChange, onResetParams, config, onConfigChange, errors, runtimeMs, barsCount, period, onPeriodChange, range } =
-    props;
+  const {
+    strategies,
+    customStrategies,
+    onEditCustom,
+    strategyId,
+    onStrategyChange,
+    params,
+    onParamsChange,
+    onResetParams,
+    config,
+    onConfigChange,
+    errors,
+    runtimeMs,
+    barsCount,
+    period,
+    onPeriodChange,
+    range,
+  } = props;
   const { t, strategyName, strategyDescription } = useI18n();
-  const def = strategies.find((s) => s.id === strategyId) ?? strategies[0];
+  const custom = customStrategies.find((s) => s.id === strategyId);
+  const def = custom ?? strategies.find((s) => s.id === strategyId) ?? strategies[0];
   const [open, setOpen] = usePersistentState('ui.strategyOpen', true, isBoolean);
 
   return (
@@ -147,13 +168,38 @@ export default function StrategyPanel(props: StrategyPanelProps) {
             {t('strategy.strategy')}
           </label>
           <select id="strategy-select" className="input" value={def.id} onChange={(e) => onStrategyChange(e.target.value)}>
-            {strategies.map((s) => (
-              <option key={s.id} value={s.id}>
-                {strategyName(s)}
-              </option>
-            ))}
+            <optgroup label={t('strategy.builtIn')}>
+              {strategies.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {strategyName(s)}
+                </option>
+              ))}
+            </optgroup>
+            {customStrategies.length > 0 && (
+              <optgroup label={t('strategy.custom')}>
+                {customStrategies.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {strategyName(s) || t('rb.untitled')}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
-          <p className="mt-2 text-[11px] leading-snug text-terminal-faint">{strategyDescription(def)}</p>
+          {custom ? (
+            <div className="mt-2 space-y-2">
+              {custom.description && <p className="text-[11px] leading-snug text-terminal-faint">{custom.description}</p>}
+              <button type="button" className="btn w-full" onClick={() => onEditCustom(custom.id)}>
+                {t('strategy.editCustom')}
+              </button>
+            </div>
+          ) : (
+            <>
+              <p className="mt-2 text-[11px] leading-snug text-terminal-faint">{strategyDescription(def)}</p>
+              <button type="button" className="mt-2 text-[11px] text-accent transition-colors hover:text-terminal-text" onClick={() => onEditCustom('')}>
+                {t('strategy.openBuilder')}
+              </button>
+            </>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-x-2 gap-y-3">
@@ -266,9 +312,11 @@ export default function StrategyPanel(props: StrategyPanelProps) {
           </ul>
         )}
 
-        <button type="button" className="btn w-full" onClick={onResetParams}>
-          {t('strategy.reset')}
-        </button>
+        {!custom && (
+          <button type="button" className="btn w-full" onClick={onResetParams}>
+            {t('strategy.reset')}
+          </button>
+        )}
       </div>
     </section>
   );

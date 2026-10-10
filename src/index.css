@@ -59,6 +59,12 @@
   .input {
     @apply w-full rounded border border-terminal-border bg-terminal-bg px-2 py-1.5 font-mono text-sm text-terminal-text outline-none transition-colors placeholder:text-terminal-faint focus:border-accent;
   }
+  .input-sm {
+    @apply rounded border border-terminal-border bg-terminal-bg px-1.5 py-1 font-mono text-xs text-terminal-text outline-none transition-colors focus:border-accent;
+  }
+  .rule-card {
+    @apply rounded border border-terminal-border bg-terminal-raised/40 p-2;
+  }
   .btn {
     @apply inline-flex items-center justify-center gap-1.5 rounded border border-terminal-border bg-terminal-raised px-3 py-1.5 text-xs font-medium text-terminal-text transition-colors hover:border-terminal-faint disabled:cursor-not-allowed disabled:opacity-50;
   }

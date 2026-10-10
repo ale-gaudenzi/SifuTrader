@@ -7,18 +7,29 @@ import { smaCrossDefinition } from '../strategies/smaCross';
 import { STRATEGIES } from '../strategies';
 import { BacktestError, runBacktest } from './backtester';
 import {
+  adx,
+  aroon,
+  atr,
   bollinger,
   crossedAbove,
   crossedBelow,
   ema,
   inferPeriodsPerYear,
   macd,
+  mfi,
+  obv,
+  parabolicSar,
   resample,
   roc,
   rollingMax,
   rollingMin,
   rsi,
   sma,
+  stochastic,
+  supertrend,
+  trueRange,
+  williamsR,
+  wma,
 } from './indicators';
 import { maxDrawdownPct } from './metrics';
 import type { BacktestConfig, Bar, Order, Strategy, StrategyContext } from './types';
@@ -146,6 +157,56 @@ describe('indicators', () => {
   });
 });
 
+describe('extra indicators', () => {
+  const ohlc = [bar(0, 10, 12, 9, 11), bar(1, 11, 13, 10, 12), bar(2, 12, 12, 8, 9), bar(3, 9, 11, 9, 10)];
+
+  it('weights recent values more in the WMA', () => {
+    expect(wma([1, 2, 3], 3)).toEqual([null, null, (1 + 4 + 9) / 6]);
+  });
+
+  it('computes the true range and a Wilder ATR', () => {
+    // TR: 3, max(3, 2, 1) = 3, max(4, 0, 4) = 4, max(2, 2, 0) = 2
+    expect(trueRange(ohlc)).toEqual([3, 3, 4, 2]);
+    expect(atr(ohlc, 2)).toEqual([null, 3, 3.5, 2.75]);
+  });
+
+  it('places the stochastic close within the range', () => {
+    const { k } = stochastic(ohlc, 2, 1, 1);
+    // Bar 2: highest high 13, lowest low 8, close 9 -> 20.
+    expect(k[2]).toBeCloseTo(20);
+    expect(williamsR(ohlc, 2)[2]).toBeCloseTo(-80);
+  });
+
+  it('accumulates on-balance volume by the direction of the close', () => {
+    expect(obv(ohlc)).toEqual([0, 1000, 0, 1000]);
+  });
+
+  it('keeps ADX, Aroon and MFI within 0..100', () => {
+    const bars = Array.from({ length: 80 }, (_, i) => {
+      const c = 100 + 10 * Math.sin(i / 5);
+      return bar(i, c - 1, c + 2, c - 2, c);
+    });
+    const { adx: a, plusDi, minusDi } = adx(bars, 14);
+    const { up, down } = aroon(bars, 14);
+    for (const s of [a, plusDi, minusDi, up, down, mfi(bars, 14)]) {
+      const defined = s.filter((v): v is number => v !== null);
+      expect(defined.length).toBeGreaterThan(0);
+      expect(defined.every((v) => v >= 0 && v <= 100)).toBe(true);
+    }
+    expect(a.findIndex((v) => v !== null)).toBe(27);
+  });
+
+  it('keeps the Parabolic SAR and Supertrend on the correct side of price', () => {
+    const rising = Array.from({ length: 40 }, (_, i) => bar(i, 100 + i, 101 + i, 99 + i, 100.5 + i));
+    const sar = parabolicSar(rising);
+    const st = supertrend(rising, 5, 2);
+    for (let i = 5; i < rising.length; i++) {
+      expect(sar[i] ?? Infinity).toBeLessThan(rising[i].low);
+      expect(st[i] ?? Infinity).toBeLessThan(rising[i].close);
+    }
+  });
+});
+
 describe('metrics', () => {
   it('measures the largest peak-to-trough decline', () => {
     expect(maxDrawdownPct([100, 120, 90, 130, 117])).toBeCloseTo(25);
@@ -186,6 +247,58 @@ describe('backtester execution model', () => {
 
     const miss = runBacktest(bars, scripted({ 0: [{ kind: 'limit', side: 'buy', price: 90, cash: 1_000 }] }), NO_COSTS);
     expect(miss.fills).toHaveLength(0);
+  });
+
+  it('fills stop sells at the stop when the low touches it, and at the open on a gap', () => {
+    const entry = { kind: 'market', side: 'buy', cash: 1_000 } as const;
+    const touch = runBacktest(bars, scripted({ 0: [entry], 1: [{ kind: 'stop', side: 'sell', price: 96.5, quantity: 'all' }] }), NO_COSTS);
+    expect(touch.fills[1]).toMatchObject({ barIndex: 2, side: 'sell', price: 96.5 });
+
+    const gap = runBacktest(bars, scripted({ 0: [entry], 1: [{ kind: 'stop', side: 'sell', price: 99, quantity: 'all' }] }), NO_COSTS);
+    expect(gap.fills[1]).toMatchObject({ barIndex: 2, price: 97 });
+
+    const miss = runBacktest(bars, scripted({ 0: [entry], 1: [{ kind: 'stop', side: 'sell', price: 90, quantity: 'all' }] }), NO_COSTS);
+    expect(miss.fills).toHaveLength(1);
+  });
+
+  it('fills stop buys when the high reaches the stop and applies slippage to stops', () => {
+    const cfg: BacktestConfig = { ...NO_COSTS, slippagePct: 1 };
+    const breakout = runBacktest(bars, scripted({ 1: [{ kind: 'stop', side: 'buy', price: 108, cash: 1_000 }] }), cfg);
+    expect(breakout.fills[0].barIndex).toBe(2);
+    expect(breakout.fills[0].price).toBeCloseTo(108 * 1.01);
+
+    const gap = runBacktest(bars, scripted({ 0: [{ kind: 'stop', side: 'buy', price: 101, cash: 1_000 }] }), cfg);
+    expect(gap.fills[0].price).toBeCloseTo(102 * 1.01);
+  });
+
+  it('orders a stop and a take-profit in the same bar along the intrabar path', () => {
+    const both = runBacktest(
+      bars,
+      scripted({
+        0: [{ kind: 'market', side: 'buy', cash: 1_000 }],
+        1: [
+          { kind: 'stop', side: 'sell', price: 96.5, quantity: 'all', tag: 'stop' },
+          { kind: 'limit', side: 'sell', price: 109.5, quantity: 'all', tag: 'tp' },
+        ],
+      }),
+      NO_COSTS,
+    );
+    // Bar 2 is an up bar (O97 -> L96 -> H110): the stop at 96.5 triggers first and the take-profit finds no position.
+    expect(both.fills.map((f) => f.tag ?? 'entry')).toEqual(['entry', 'stop']);
+
+    // Bar 1 is a down bar (O102 -> H103 -> L95): the take-profit at 102.5 comes before the stop at 96.
+    const down = runBacktest(
+      bars,
+      scripted({
+        0: [
+          { kind: 'market', side: 'buy', cash: 1_000 },
+          { kind: 'stop', side: 'sell', price: 96, quantity: 'all', tag: 'stop' },
+          { kind: 'limit', side: 'sell', price: 102.5, quantity: 'all', tag: 'tp' },
+        ],
+      }),
+      NO_COSTS,
+    );
+    expect(down.fills.map((f) => f.tag ?? 'entry')).toEqual(['entry', 'tp']);
   });
 
   it('expires unfilled orders after one bar', () => {

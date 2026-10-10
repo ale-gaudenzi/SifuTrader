@@ -46,6 +46,14 @@ export abstract class BaseStrategy<P extends ParamValues> implements Strategy {
   protected limitSellAll(price: number, tag?: string): Order {
     return { kind: 'limit', side: 'sell', price, quantity: 'all', tag };
   }
+
+  protected stopBuy(price: number, cash: number, tag?: string): Order {
+    return { kind: 'stop', side: 'buy', price, cash, tag };
+  }
+
+  protected stopSellAll(price: number, tag?: string): Order {
+    return { kind: 'stop', side: 'sell', price, quantity: 'all', tag };
+  }
 }
 
 /** Share of cash committed per entry, common to the all-in/all-out signal strategies. */

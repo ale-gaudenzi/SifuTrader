@@ -33,12 +33,16 @@ export type OrderSide = 'buy' | 'sell';
  *
  * Buy orders are sized in cash (notional). Sell orders are sized in units,
  * or `'all'` to flatten the position at the moment of execution.
+ *
+ * A limit order waits for a better price (buy at or below, sell at or above);
+ * a stop order waits for a worse one (buy at or above, sell at or below) and
+ * then executes like a market order, so it pays slippage.
  */
 export type Order =
   | { kind: 'market'; side: 'buy'; cash: number; tag?: string }
   | { kind: 'market'; side: 'sell'; quantity: number | 'all'; tag?: string }
-  | { kind: 'limit'; side: 'buy'; price: number; cash: number; tag?: string }
-  | { kind: 'limit'; side: 'sell'; price: number; quantity: number | 'all'; tag?: string };
+  | { kind: 'limit' | 'stop'; side: 'buy'; price: number; cash: number; tag?: string }
+  | { kind: 'limit' | 'stop'; side: 'sell'; price: number; quantity: number | 'all'; tag?: string };
 
 /** An executed order. */
 export interface Fill {

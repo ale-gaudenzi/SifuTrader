@@ -8,19 +8,26 @@ import { useEffect, useState } from 'react';
 
 const PREFIX = 'backtest-terminal:';
 
-function read<T>(key: string, fallback: T, guard: (v: unknown) => v is T): T {
+function read<T>(key: string, fallback: T, parse: (v: unknown) => T | null): T {
   try {
     const raw = window.localStorage.getItem(PREFIX + key);
     if (raw === null) return fallback;
-    const parsed: unknown = JSON.parse(raw);
-    return guard(parsed) ? parsed : fallback;
+    return parse(JSON.parse(raw)) ?? fallback;
   } catch {
     return fallback;
   }
 }
 
 export function usePersistentState<T>(key: string, fallback: T, guard: (v: unknown) => v is T) {
-  const [value, setValue] = useState<T>(() => read(key, fallback, guard));
+  return usePersistentParsed(key, fallback, (v) => (guard(v) ? v : null));
+}
+
+/**
+ * Like `usePersistentState`, for values that need normalizing on load (e.g.
+ * dropping invalid entries from a list) rather than a plain type guard.
+ */
+export function usePersistentParsed<T>(key: string, fallback: T, parse: (v: unknown) => T | null) {
+  const [value, setValue] = useState<T>(() => read(key, fallback, parse));
   useEffect(() => {
     try {
       window.localStorage.setItem(PREFIX + key, JSON.stringify(value));

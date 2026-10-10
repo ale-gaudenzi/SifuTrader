@@ -26,6 +26,14 @@ Built with React 19, TypeScript, Vite, Tailwind CSS 4, [Lightweight Charts](http
 - Equity curve against buy and hold with a drawdown pane; sortable, paginated trade log with CSV export.
 - Results recompute on every change of data, timeframe or parameters.
 
+**Strategy Builder** (separate view, `Strategy Builder` in the header or `#builder` in the URL)
+- Build long-only strategies without code from entry, scale-in and exit rules, each a group of conditions combined with AND/OR (one level of nesting).
+- Conditions compare prices, 41 indicators (moving averages, oscillators, bands and channels, volatility, trend, volume) or open-position values (P&L, bars held, entry price...), with crosses, rising/falling, candlestick patterns, calendar events, past values ("N bars ago"), percentage offsets and "on each / at least once in the last N bars".
+- Orders at market, limit or stop (e.g. breakout entries), sized as a share of cash, equity or initial capital or as a fixed amount; partial exits; adds with a size multiplier.
+- Risk management: stop loss, take profit and trailing stop in percent or ATR multiples, break-even stop, maximum holding time, cooldown after an exit.
+- Every edit reruns the backtest; a plain-language summary and the number of bars on which each rule fires catch rules that never trigger. Templates reproduce the built-in strategies.
+- Strategies are saved in the browser, appear in the Backtest strategy list, and can be exported, imported as JSON or shared as a link that carries the strategy in the URL fragment.
+
 **Fundamentals** (separate view, `Fundamentals` in the header or `#fundamentals` in the URL)
 - For the watchlist stocks: daily market cap and enterprise value, and the history of P/E, EV/EBITDA, P/S, P/B, dividend yield and FCF yield.
 - Revenue, gross profit, operating income, EBITDA, net income, free cash flow and EPS by fiscal year or quarter, plus a table of the annual statements with margins and debt/equity.
@@ -63,9 +71,11 @@ public/fundamentals/           Generated fundamentals snapshot (git-ignored)
 src/
   engine/                      Domain types, backtester, indicators, metrics (pure TS)
   strategies/                  BaseStrategy, strategy implementations, registry
+  strategies/rules/            Strategy-builder specs: types, indicator catalog, validation, compiler, templates
   data/                        CSV parsing, data providers, fundamentals and valuation
   components/                  Charts, data input, strategy panel, metrics, trade log
   components/fundamentals/     Fundamentals view
+  components/builder/          Strategy Builder view
   hooks/                       localStorage preferences, URL-fragment view
   i18n.tsx                     English / Italian strings and language provider
   App.tsx, main.tsx
@@ -79,7 +89,8 @@ The simulator is deterministic and long-only, trades a single instrument and all
 2. Orders are live for bar `i + 1` only, then expire.
    - **Market** orders fill at the next open, adjusted by slippage.
    - **Limit buy** orders fill at the open if the market gaps through the limit, otherwise at the limit price if the bar's low reaches it. Limit sells mirror this using the high. Limit fills have no slippage.
-3. Multiple orders triggered in the same bar execute in the order of an assumed intrabar path: open, low, high, close on up bars; open, high, low, close on down bars.
+   - **Stop sell** orders (stop-losses) fill at the open if the market gaps below the stop, otherwise at the stop price if the bar's low reaches it. Stop buys (breakout entries) mirror this using the high. A triggered stop becomes a market order, so its fill pays slippage.
+3. Multiple orders triggered in the same bar execute in the order of an assumed intrabar path: open, low, high, close on up bars; open, high, low, close on down bars. A stop and a take-profit in the same bar therefore resolve by which price the path reaches first.
 4. Commission is charged on the notional of every fill. Buys are sized in cash, include the commission, and never exceed available cash.
 5. The portfolio is marked to market at every close. A position still open at the end appears as an `Open` trade valued at the last close, and is excluded from win rate and trade count.
 6. The buy-and-hold benchmark invests the initial capital at the first bar's close with no fees.
@@ -186,6 +197,14 @@ export class MyStrategy extends BaseStrategy<MyParams> {
 }
 ```
 
+### Strategy Builder
+
+A builder strategy is a JSON spec (`src/strategies/rules/spec.ts`) compiled into an ordinary `Strategy` (`compile.ts`), so it runs through the same engine and execution model. Operands only look back and every indicator is causal, so no spec can see future bars; the tests check this with the truncation test and check that the templates trade exactly like the hand-written strategies.
+
+On each bar close a flat strategy submits its entry order if the cooldown has elapsed and the entry conditions hold (no conditions means "buy whenever flat"). With a position open it submits, in order: exit rules whose conditions hold, the time exit, one protective stop (the highest of stop loss, trailing stop and break-even), the take-profit, and a scale-in when its conditions hold. Risk levels refer to the average entry price and apply from the bar after the first entry fill; the trailing stop follows the entry price, the entry bar's close and the highs of later bars. ATR-based stop loss and take profit use the ATR at the bar that triggered the entry; the ATR trailing stop uses the current ATR. Open-position values have no history, so they cannot be used in crosses, trends, "last N bars" checks or as indicator inputs.
+
+To add an indicator: implement it causally in `src/engine/indicators.ts`, add its name to `INDICATORS` in `spec.ts` and its entry to `INDICATOR_INFO` in `catalog.ts`, then add `rb.ind.*` and `rb.short.*` texts in both languages (the `Messages` type enforces them).
+
 ## Data sources
 
 Only sources that work from a static site, with no proxy, key or local storage:
@@ -226,7 +245,7 @@ The build is served by a Cloudflare Worker with static assets (`wrangler.jsonc`)
 
 ## Limitations
 
-- Long-only, single instrument. No shorting, leverage, margin or dividends.
+- Long-only, single instrument. No shorting, leverage, margin or dividends. The Strategy Builder has the same limits and does not use fundamentals.
 - The intrabar path is a heuristic: daily bars cannot show whether the high or the low came first.
 - Yahoo daily prices are split-adjusted but not dividend-adjusted, so buy-and-hold returns on dividend payers are understated.
 - Sharpe uses simple per-bar returns, a zero risk-free rate and an annualization factor inferred from bar spacing.

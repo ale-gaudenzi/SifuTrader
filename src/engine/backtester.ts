@@ -10,6 +10,9 @@
  *    - Limit buys fill at the open if it gaps below the limit, otherwise at
  *      the limit price if the bar's low reaches it. Limit sells mirror this
  *      using the high. Limit fills are not subject to slippage.
+ *    - Stop sells fill at the open if it gaps below the stop, otherwise at the
+ *      stop price if the bar's low reaches it. Stop buys mirror this using the
+ *      high. A triggered stop becomes a market order, so slippage applies.
  * 3. When several orders trigger inside the same bar, they are executed in the
  *    order in which an assumed intrabar path reaches their prices:
  *    open -> low -> high -> close for up bars, open -> high -> low -> close
@@ -102,6 +105,13 @@ function evaluateTrigger(order: Order, bar: Bar, path: readonly number[], slippa
     const price = order.side === 'buy' ? bar.open * (1 + slippage) : bar.open * (1 - slippage);
     return { at: 0, price };
   }
+  if (order.kind === 'stop') {
+    const slip = order.side === 'buy' ? 1 + slippage : 1 - slippage;
+    if (order.side === 'buy' ? bar.open >= order.price : bar.open <= order.price) return { at: 0, price: bar.open * slip };
+    if (order.side === 'buy' ? bar.high < order.price : bar.low > order.price) return null;
+    const at = firstTouch(path, order.price);
+    return at === null ? null : { at, price: order.price * slip };
+  }
   if (order.side === 'buy') {
     if (bar.open <= order.price) return { at: 0, price: bar.open };
     if (bar.low > order.price) return null;
@@ -117,7 +127,7 @@ function validateOrder(order: Order, strategyId: string, index: number): void {
   const fail = (why: string): never => {
     throw new BacktestError(`Strategy "${strategyId}" emitted an invalid order on bar ${index}: ${why}`);
   };
-  if (order.kind === 'limit' && !(Number.isFinite(order.price) && order.price > 0)) fail('limit price must be positive');
+  if (order.kind !== 'market' && !(Number.isFinite(order.price) && order.price > 0)) fail(`${order.kind} price must be positive`);
   if (order.side === 'buy' && !(Number.isFinite(order.cash) && order.cash >= 0)) fail('buy cash must be a non-negative number');
   if (order.side === 'sell' && order.quantity !== 'all' && !(Number.isFinite(order.quantity) && order.quantity >= 0)) {
     fail('sell quantity must be a non-negative number or "all"');

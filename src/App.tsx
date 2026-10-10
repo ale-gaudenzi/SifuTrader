@@ -2,7 +2,7 @@
  * Application shell: wires the data layer, chart, strategy configuration and
  * backtest results together. All computation happens in the browser.
  */
-import { Suspense, lazy, useCallback, useDeferredValue, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import Chart, { type OverlayState } from './components/Chart';
 import DataInput from './components/DataInput';
 import EquityChart from './components/EquityChart';
@@ -10,16 +10,22 @@ import Metrics from './components/Metrics';
 import { Logo } from './components/Logo';
 import StrategyPanel, { type BacktestPeriod, type PeriodRange } from './components/StrategyPanel';
 import TradeTable from './components/TradeTable';
+import BuilderPage from './components/builder/BuilderPage';
+import { issueText } from './components/builder/describe';
+import { newSpecId, takeSharedStrategy } from './components/builder/share';
 import type { Dataset } from './data/providers';
 import { BacktestError, DEFAULT_CONFIG, runBacktest } from './engine/backtester';
 import { resample } from './engine/indicators';
-import type { BacktestConfig, BacktestResult, ParamValues, Timeframe } from './engine/types';
+import type { BacktestConfig, BacktestResult, ParamValues, StrategyDefinition, Timeframe } from './engine/types';
 import { useHashView } from './hooks/useHashView';
-import { isOneOf, usePersistentState } from './hooks/usePersistentState';
+import { isOneOf, isString, usePersistentParsed, usePersistentState } from './hooks/usePersistentState';
 import { formatDate, isoDate } from './format';
 import { LANGS, useI18n } from './i18n';
-import { STRATEGIES, getStrategy } from './strategies';
+import { STRATEGIES } from './strategies';
 import { defaultParams } from './strategies/base';
+import { ruleDefinition } from './strategies/rules/compile';
+import { customStrategyId, type RuleStrategySpec } from './strategies/rules/spec';
+import { parseSpec, validateSpec } from './strategies/rules/validate';
 
 // Split into its own chunk: the backtester never pays for the fundamentals page.
 const FundamentalsPage = lazy(() => import('./components/fundamentals/FundamentalsPage'));
@@ -36,6 +42,8 @@ const isParamStore = (v: unknown): v is ParamStore =>
 const isConfig = (v: unknown): v is BacktestConfig =>
   isObject(v) && (['initialCapital', 'feePct', 'slippagePct'] as const).every((k) => typeof v[k] === 'number');
 const isEmaPeriod = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 2 && v <= 400;
+/** Stored custom strategies; unreadable entries are dropped rather than discarding the list. */
+const parseSpecList = (v: unknown): RuleStrategySpec[] | null => (Array.isArray(v) ? v.map(parseSpec).filter((s): s is RuleStrategySpec => s !== null) : null);
 
 interface RunOutcome {
   result: BacktestResult | null;
@@ -51,17 +59,62 @@ export default function App() {
   const [timeframe, setTimeframe] = usePersistentState<Timeframe>('chart.timeframe', '1D', isOneOf(['1D', '1W', '1M'] as const));
   const [overlays, setOverlays] = usePersistentState<OverlayState>('chart.overlays', DEFAULT_OVERLAYS, isOverlayState);
   const [emaPeriod, setEmaPeriod] = usePersistentState('chart.emaPeriod', 21, isEmaPeriod);
-  const [strategyId, setStrategyId] = usePersistentState('bt.strategy', STRATEGIES[0].id, isOneOf(STRATEGIES.map((s) => s.id)));
+  // Any id is accepted: custom strategies may be deleted, and an unknown id falls back below.
+  const [strategyId, setStrategyId] = usePersistentState('bt.strategy', STRATEGIES[0].id, isString);
   const [paramStore, setParamStore] = usePersistentState<ParamStore>('bt.params', {}, isParamStore);
   const [config, setConfig] = usePersistentState<BacktestConfig>('bt.config', DEFAULT_CONFIG, isConfig);
+  const [customs, setCustoms] = usePersistentParsed<RuleStrategySpec[]>('custom.strategies', [], parseSpecList);
+  const [builderId, setBuilderId] = usePersistentState('builder.selected', '', isString);
+  const [builderNotice, setBuilderNotice] = useState<string | null>(null);
 
-  const definition = getStrategy(strategyId);
+  const customDefs = useMemo(() => customs.map(ruleDefinition), [customs]);
+  const backtestDef = STRATEGIES.find((s) => s.id === strategyId) ?? customDefs.find((s) => s.id === strategyId) ?? STRATEGIES[0];
+  const builderSpec = customs.find((s) => s.id === builderId) ?? customs[0] ?? null;
+  const builderDef = useMemo(() => (builderSpec ? ruleDefinition(builderSpec) : null), [builderSpec]);
+  const inBuilder = view === 'builder';
+  // The builder tests the strategy being edited; the backtest view the one picked in its panel.
+  const definition: StrategyDefinition | null = inBuilder ? builderDef : backtestDef;
+  const activeSpec = inBuilder ? builderSpec : (customs.find((s) => customStrategyId(s) === backtestDef.id) ?? null);
+  const builderIssues = useMemo(() => (builderSpec ? validateSpec(builderSpec).map((issue) => issueText(issue, i18n)) : []), [builderSpec, i18n]);
+
+  const updateSpec = useCallback((spec: RuleStrategySpec) => setCustoms((list) => list.map((s) => (s.id === spec.id ? spec : s))), [setCustoms]);
+  const addSpecs = useCallback(
+    (specs: RuleStrategySpec[]) => {
+      const [first] = specs;
+      if (!first) return;
+      setCustoms((list) => [...list, ...specs]);
+      setBuilderId(first.id);
+      setBuilderNotice(null);
+    },
+    [setCustoms, setBuilderId],
+  );
+  const deleteSpec = useCallback((id: string) => setCustoms((list) => list.filter((s) => s.id !== id)), [setCustoms]);
+
+  // A strategy shared through a `#builder=...` link is added to the user's list on arrival.
+  useEffect(() => {
+    const take = (): void => {
+      const shared = takeSharedStrategy();
+      if (shared === undefined) return;
+      if (shared === null) {
+        setBuilderNotice(t('rb.sharedInvalid'));
+        return;
+      }
+      const copy = { ...shared, id: newSpecId() };
+      setCustoms((list) => [...list, copy]);
+      setBuilderId(copy.id);
+      setBuilderNotice(t('rb.sharedImported', { name: copy.name || t('rb.untitled') }));
+    };
+    take();
+    window.addEventListener('hashchange', take);
+    return () => window.removeEventListener('hashchange', take);
+  }, [setCustoms, setBuilderId, t]);
   // Merge stored values over defaults so newly added parameters get sensible values.
   const params = useMemo<ParamValues>(
-    () => ({ ...defaultParams(definition.params), ...(paramStore[definition.id] ?? {}) }),
-    [definition, paramStore],
+    () => ({ ...defaultParams(backtestDef.params), ...(paramStore[backtestDef.id] ?? {}) }),
+    [backtestDef, paramStore],
   );
-  const setParams = useCallback((next: ParamValues) => setParamStore((s) => ({ ...s, [definition.id]: next })), [definition.id, setParamStore]);
+  const setParams = useCallback((next: ParamValues) => setParamStore((s) => ({ ...s, [backtestDef.id]: next })), [backtestDef.id, setParamStore]);
+  const activeParams = inBuilder ? {} : params;
 
   const bars = useMemo(() => (dataset ? resample(dataset.bars, timeframe) : []), [dataset, timeframe]);
 
@@ -85,12 +138,14 @@ export default function App() {
   }, [bars, range]);
 
   // Deferring inputs keeps typing in parameter fields responsive on long histories.
-  const deferredParams = useDeferredValue(params);
+  const deferredParams = useDeferredValue(activeParams);
   const deferredConfig = useDeferredValue(config);
+  const deferredDefinition = useDeferredValue(definition);
+  const deferredSpec = useDeferredValue(activeSpec);
 
   const outcome = useMemo<RunOutcome>(() => {
-    if (bars.length === 0) return { result: null, errors: [], runtimeMs: null };
-    const errors = definition.validate(deferredParams);
+    if (bars.length === 0 || deferredDefinition === null) return { result: null, errors: [], runtimeMs: null };
+    const errors = deferredSpec ? validateSpec(deferredSpec).map((issue) => issueText(issue, i18n)) : deferredDefinition.validate(deferredParams);
     if (testBars.length < 2) errors.push(t('err.period'));
     if (!(deferredConfig.initialCapital > 0)) errors.push(t('err.capital'));
     if (!(deferredConfig.feePct >= 0 && deferredConfig.feePct <= 5)) errors.push(t('err.fee'));
@@ -98,16 +153,17 @@ export default function App() {
     if (errors.length > 0) return { result: null, errors, runtimeMs: null };
     try {
       const t0 = performance.now();
-      const result = runBacktest(testBars, definition.create(deferredParams), deferredConfig, deferredParams);
+      const result = runBacktest(testBars, deferredDefinition.create(deferredParams), deferredConfig, deferredParams);
       return { result, errors: [], runtimeMs: performance.now() - t0 };
     } catch (e) {
       const message = e instanceof BacktestError || e instanceof Error ? e.message : String(e);
       return { result: null, errors: [message], runtimeMs: null };
     }
-  }, [bars, testBars, definition, deferredParams, deferredConfig, t]);
+  }, [bars, testBars, deferredDefinition, deferredSpec, deferredParams, deferredConfig, t, i18n]);
 
   const { result } = outcome;
-  const errors = outcome.errors.map((e) => i18n.validationMessage(definition, e));
+  const errors = deferredDefinition ? outcome.errors.map((e) => i18n.validationMessage(deferredDefinition, e)) : [];
+  const strategyLabel = definition ? i18n.strategyName(definition) || t('rb.untitled') : '';
   const first = bars[0];
   const last = bars[bars.length - 1];
 
@@ -115,7 +171,7 @@ export default function App() {
     <div className="flex min-h-screen flex-col lg:h-screen">
       <header className="flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-terminal-border bg-terminal-panel px-4 py-2.5">
         <Logo />
-        {view === 'backtest' && dataset && first && last && (
+        {view !== 'fundamentals' && dataset && first && last && (
           <div className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 font-mono text-[11px] text-terminal-muted">
             <span className="text-terminal-text">
               {dataset.symbol}
@@ -130,9 +186,9 @@ export default function App() {
         )}
         <div className="ml-auto flex items-center gap-3">
           <div className="seg" role="group" aria-label={t('view.aria')}>
-            {(['backtest', 'fundamentals'] as const).map((v) => (
+            {(['backtest', 'builder', 'fundamentals'] as const).map((v) => (
               <button key={v} type="button" aria-pressed={v === view} onClick={() => setView(v)}>
-                {t(v === 'backtest' ? 'view.backtest' : 'view.fundamentals')}
+                {t(`view.${v}`)}
               </button>
             ))}
           </div>
@@ -154,11 +210,17 @@ export default function App() {
           <DataInput onDataset={setDataset} activeSymbol={dataset?.symbol ?? null} initialSample="AAPL" />
           <StrategyPanel
             strategies={STRATEGIES}
-            strategyId={definition.id}
+            customStrategies={customDefs}
+            onEditCustom={(id) => {
+              const spec = customs.find((s) => customStrategyId(s) === id);
+              if (spec) setBuilderId(spec.id);
+              setView('builder');
+            }}
+            strategyId={backtestDef.id}
             onStrategyChange={setStrategyId}
             params={params}
             onParamsChange={setParams}
-            onResetParams={() => setParams(defaultParams(definition.params))}
+            onResetParams={() => setParams(defaultParams(backtestDef.params))}
             config={config}
             onConfigChange={setConfig}
             errors={errors}
@@ -187,7 +249,7 @@ export default function App() {
               {result && (
                 <>
                   <Metrics metrics={result.metrics} />
-                  <EquityChart curve={result.equityCurve} strategyName={i18n.strategyName(definition)} />
+                  <EquityChart curve={result.equityCurve} strategyName={strategyLabel} />
                   <TradeTable trades={result.trades} exportName={`${dataset.symbol}_${result.strategyId}_${timeframe}_trades.csv`} />
                 </>
               )}
@@ -197,6 +259,27 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {inBuilder && (
+        <main className="flex-1 p-3 lg:min-h-0">
+          <BuilderPage
+            specs={customs}
+            spec={builderSpec}
+            onSelect={setBuilderId}
+            onChange={updateSpec}
+            onAdd={addSpecs}
+            onDelete={deleteSpec}
+            onUseInBacktest={(spec) => {
+              setStrategyId(customStrategyId(spec));
+              setView('backtest');
+            }}
+            issues={[...new Set([...builderIssues, ...errors])]}
+            bars={testBars}
+            result={result}
+            notice={builderNotice}
+          />
+        </main>
+      )}
 
       {view === 'fundamentals' && (
         <main className="flex-1 p-3 lg:min-h-0 lg:overflow-y-auto">

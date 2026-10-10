@@ -54,6 +54,8 @@ engine/                  Types, backtester, indicators, metrics (pure TS)
 3. Add Italian texts for its name, description and parameters to `STRATEGIES_IT` in `src/i18n.tsx`. This is required: `i18n.test.ts` fails if a strategy is not translated. Standard validation messages (from `validateParams`) are translated automatically; a custom message needs an `err.*` key and a branch in `validationMessage`.
 4. Add engine tests for its entry/exit logic.
 
+**Extending the Strategy Builder**: specs live in `src/strategies/rules/` (`spec.ts` types, `catalog.ts` indicators/patterns/calendar, `validate.ts` parsing and checks, `compile.ts` the compiler, `templates.ts`). A new indicator goes in `engine/indicators.ts` (causal), `INDICATORS` and `INDICATOR_INFO`, plus `rb.ind.*`/`rb.short.*` texts. Changing the spec shape must keep `parseSpec` able to read specs already saved in users' browsers (add fields with defaults, never rename).
+
 **UI strings**: never hard-code user-facing text in components. Add a key to both the `en` and `it` dictionaries in `src/i18n.tsx` and use `t(key, vars)`. The `Messages` type makes a missing Italian key a type error.
 
 **Data providers**: all network code lives in `src/data/providers.ts`. Sources are limited to what works from a static site without a proxy or key: the same-origin history and fundamentals snapshots (`public/history/` and `public/fundamentals/`, built from `data/watchlist.json` by `scripts/build-history.mjs` and `scripts/build-fundamentals.mjs` in CI) and Binance. Nothing is persisted. Every network path falls back to the bundled sample and must never throw unhandled into the UI.
