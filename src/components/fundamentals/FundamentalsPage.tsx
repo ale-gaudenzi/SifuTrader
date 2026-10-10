@@ -11,10 +11,10 @@ import {
   periodRatios,
   valuationSeries,
   type FiscalPeriod,
-  type FlowField,
   type Fundamentals,
   type FundamentalsIndex,
   type PeriodField,
+  type PeriodRatios,
   type ValuationPoint,
 } from '../../data/fundamentals';
 import { loadFundamentals, loadFundamentalsIndex, loadPriceHistory } from '../../data/providers';
@@ -39,8 +39,17 @@ const MULTIPLES: ReadonlyArray<{ key: Multiple; label: MessageKey; title: Messag
   { key: 'fcfYieldPct', label: 'fund.fcfYield', title: 'fund.fcfYieldTitle', pct: true },
 ];
 
-const FINANCIALS: readonly FlowField[] = ['revenue', 'grossProfit', 'operatingIncome', 'ebitda', 'netIncome', 'fcf', 'eps'];
+/** Every statement item, in the order of the statements table. */
+const FIELDS: readonly PeriodField[] = ['revenue', 'grossProfit', 'operatingIncome', 'ebitda', 'netIncome', 'eps', 'fcf', 'dividends', 'shares', 'debt', 'cash', 'equity'];
 type PeriodKind = 'annual' | 'quarterly';
+
+type Ratio = keyof PeriodRatios;
+const RATIOS: ReadonlyArray<{ key: Ratio; label: MessageKey; pct: boolean }> = [
+  { key: 'grossMarginPct', label: 'fund.grossMargin', pct: true },
+  { key: 'ebitdaMarginPct', label: 'fund.ebitdaMargin', pct: true },
+  { key: 'netMarginPct', label: 'fund.netMargin', pct: true },
+  { key: 'debtToEquity', label: 'fund.debtToEquity', pct: false },
+];
 
 const FIELD_LABEL: Record<PeriodField, MessageKey> = {
   revenue: 'fund.revenue',
@@ -84,6 +93,31 @@ function Tiles({ tiles }: { tiles: readonly Tile[] }) {
   );
 }
 
+/** One chart of the fundamentals grid; `format` must be stable or the chart redraws on every render. */
+interface ChartSpec {
+  key: string;
+  title: string;
+  hint?: string;
+  series: MetricSeries[];
+  format: (value: number) => string;
+}
+
+function ChartGrid({ charts, kind }: { charts: readonly ChartSpec[]; kind: 'line' | 'histogram' }) {
+  const { t } = useI18n();
+  return (
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {charts.map((c) => (
+        <section key={c.key} className="panel" aria-label={c.title}>
+          <div className="panel-header" title={c.hint}>
+            <span>{c.title}</span>
+          </div>
+          <MetricChart series={c.series} kind={kind} format={c.format} emptyText={t('fund.noData')} height={200} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function StatementsTable({ data }: { data: Fundamentals }) {
   const { t } = useI18n();
   const years = data.annual;
@@ -92,13 +126,6 @@ function StatementsTable({ data }: { data: Fundamentals }) {
   const columns: Array<{ key: string; head: string; sub: string; values: Partial<Record<PeriodField, number>> }> = [
     ...years.map((p) => ({ key: String(p.time), head: `FY${new Date(p.time * 1000).getUTCFullYear()}`, sub: new Date(p.time * 1000).toISOString().slice(0, 10), values: p })),
     { key: 'ttm', head: 'TTM', sub: lastQuarter > 0 ? new Date(lastQuarter * 1000).toISOString().slice(0, 10) : t('fund.ttm'), values: ttm },
-  ];
-  const fields: readonly PeriodField[] = ['revenue', 'grossProfit', 'operatingIncome', 'ebitda', 'netIncome', 'eps', 'fcf', 'dividends', 'shares', 'debt', 'cash', 'equity'];
-  const ratioRows: ReadonlyArray<{ label: MessageKey; get: (v: Partial<Record<PeriodField, number>>) => string }> = [
-    { label: 'fund.grossMargin', get: (v) => fmtPct1(periodRatios(v).grossMarginPct) },
-    { label: 'fund.ebitdaMargin', get: (v) => fmtPct1(periodRatios(v).ebitdaMarginPct) },
-    { label: 'fund.netMargin', get: (v) => fmtPct1(periodRatios(v).netMarginPct) },
-    { label: 'fund.debtToEquity', get: (v) => fmtMultiple(periodRatios(v).debtToEquity) },
   ];
   const cell = 'px-3 py-1.5 text-right tabular-nums';
 
@@ -122,7 +149,7 @@ function StatementsTable({ data }: { data: Fundamentals }) {
             </tr>
           </thead>
           <tbody>
-            {fields.map((field) => (
+            {FIELDS.map((field) => (
               <tr key={field} className="border-b border-terminal-border/50 hover:bg-terminal-raised/40">
                 <th scope="row" className="whitespace-nowrap px-3 py-1.5 text-left font-normal text-terminal-muted">
                   {t(FIELD_LABEL[field])}
@@ -134,14 +161,14 @@ function StatementsTable({ data }: { data: Fundamentals }) {
                 ))}
               </tr>
             ))}
-            {ratioRows.map((r) => (
+            {RATIOS.map((r) => (
               <tr key={r.label} className="border-b border-terminal-border/50 hover:bg-terminal-raised/40">
                 <th scope="row" className="whitespace-nowrap px-3 py-1.5 text-left font-normal text-terminal-muted">
                   {t(r.label)}
                 </th>
                 {columns.map((c) => (
                   <td key={c.key} className={`${cell} text-terminal-text`}>
-                    {r.get(c.values)}
+                    {(r.pct ? fmtPct1 : fmtMultiple)(periodRatios(c.values)[r.key])}
                   </td>
                 ))}
               </tr>
@@ -162,8 +189,6 @@ export default function FundamentalsPage({ preferredSymbol }: FundamentalsPagePr
   const { t, locale } = useI18n();
   const [index, setIndex] = useState<FundamentalsIndex | null | undefined>(undefined);
   const [symbol, setSymbol] = usePersistentState('fund.symbol', '', isString);
-  const [multiple, setMultiple] = usePersistentState<Multiple>('fund.multiple', 'pe', isOneOf(MULTIPLES.map((m) => m.key)));
-  const [metric, setMetric] = usePersistentState<FlowField>('fund.metric', 'revenue', isOneOf(FINANCIALS));
   const [periodKind, setPeriodKind] = usePersistentState<PeriodKind>('fund.period', 'annual', isOneOf(['annual', 'quarterly'] as const));
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
 
@@ -208,7 +233,6 @@ export default function FundamentalsPage({ preferredSymbol }: FundamentalsPagePr
   const valuation = useMemo<ValuationPoint[]>(() => (load.kind === 'ready' && load.bars ? valuationSeries(load.bars, load.data) : []), [load]);
   const latest = useMemo(() => (data ? latestFigures(data) : {}), [data]);
   const last = valuation[valuation.length - 1];
-  const spec = MULTIPLES.find((m) => m.key === multiple) ?? MULTIPLES[0];
 
   const capSeries = useMemo<MetricSeries[]>(
     () => [
@@ -222,34 +246,48 @@ export default function FundamentalsPage({ preferredSymbol }: FundamentalsPagePr
     ],
     [valuation, t],
   );
-  const multipleSeries = useMemo<MetricSeries[]>(
-    () => [
-      {
-        label: t(spec.label),
-        color: CHART_COLORS.sma20,
-        points: valuation.flatMap((p) => {
-          const v = p[spec.key];
-          return v === null ? [] : [{ time: p.time, value: v }];
-        }),
-      },
-    ],
-    [valuation, spec, t],
+  const multipleCharts = useMemo<ChartSpec[]>(
+    () =>
+      MULTIPLES.map((m) => ({
+        key: m.key,
+        title: t(m.label),
+        hint: t(m.title),
+        format: m.pct ? fmtPct : formatMultiple,
+        series: [
+          {
+            label: t(m.label),
+            color: CHART_COLORS.sma20,
+            points: valuation.flatMap((p) => {
+              const v = p[m.key];
+              return v === null ? [] : [{ time: p.time, value: v }];
+            }),
+          },
+        ],
+      })),
+    [valuation, t],
   );
-  const financialSeries = useMemo<MetricSeries[]>(() => {
+  const financialCharts = useMemo<ChartSpec[]>(() => {
     const periods: readonly FiscalPeriod[] = data ? data[periodKind] : [];
+    const chart = (key: string, label: string, format: (v: number) => string, get: (p: FiscalPeriod) => number | null | undefined): ChartSpec => ({
+      key,
+      title: label,
+      format,
+      series: [
+        {
+          label,
+          color: CHART_COLORS.up,
+          points: periods.flatMap((p) => {
+            const v = get(p);
+            return v === undefined || v === null ? [] : [{ time: p.time, value: v }];
+          }),
+        },
+      ],
+    });
     return [
-      {
-        label: t(FIELD_LABEL[metric]),
-        color: CHART_COLORS.up,
-        points: periods.flatMap((p) => {
-          const v = p[metric];
-          return v === undefined ? [] : [{ time: p.time, value: v }];
-        }),
-      },
+      ...FIELDS.map((f) => chart(f, t(FIELD_LABEL[f]), formatAmount(f), (p) => p[f])),
+      ...RATIOS.map((r) => chart(r.key, t(r.label), r.pct ? fmtPct : formatMultiple, (p) => periodRatios(p)[r.key])),
     ];
-  }, [data, periodKind, metric, t]);
-  const metricFormat = useMemo(() => formatAmount(metric), [metric]);
-  const multipleFormat = useMemo(() => (spec.pct ? fmtPct : formatMultiple), [spec]);
+  }, [data, periodKind, t]);
 
   if (index === undefined) return <div className="panel p-6 text-center text-sm text-terminal-faint">{t('fund.loading')}</div>;
   if (index === null || Object.keys(index.symbols).length === 0) {
@@ -317,49 +355,30 @@ export default function FundamentalsPage({ preferredSymbol }: FundamentalsPagePr
           <Tiles tiles={valuationTiles} />
           <Tiles tiles={figureTiles} />
 
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-            <section className="panel" aria-label={t('fund.capTitle')}>
-              <div className="panel-header">
-                <span>{t('fund.capTitle')}</span>
-              </div>
-              <MetricChart series={capSeries} kind="line" format={formatVolume} emptyText={t('fund.noData')} />
-            </section>
-            <section className="panel" aria-label={t('fund.multiplesTitle')}>
-              <div className="panel-header flex-wrap">
-                <span>{t('fund.multiplesTitle')}</span>
-                <div className="seg flex-wrap normal-case tracking-normal" role="group" aria-label={t('fund.multiplesTitle')}>
-                  {MULTIPLES.map((m) => (
-                    <button key={m.key} type="button" title={t(m.title)} aria-pressed={m.key === multiple} onClick={() => setMultiple(m.key)}>
-                      {t(m.label)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <MetricChart series={multipleSeries} kind="line" format={multipleFormat} emptyText={t('fund.noData')} />
-            </section>
-          </div>
+          <section className="panel" aria-label={t('fund.capTitle')}>
+            <div className="panel-header">
+              <span>{t('fund.capTitle')}</span>
+            </div>
+            <MetricChart series={capSeries} kind="line" format={formatVolume} emptyText={t('fund.noData')} />
+          </section>
 
-          <section className="panel" aria-label={t('fund.financialsTitle')}>
-            <div className="panel-header flex-wrap">
-              <span>{t('fund.financialsTitle')}</span>
-              <div className="flex flex-wrap items-center gap-2 normal-case tracking-normal">
-                <select className="input w-auto py-1 text-xs" aria-label={t('fund.metric')} value={metric} onChange={(e) => setMetric(e.target.value as FlowField)}>
-                  {FINANCIALS.map((f) => (
-                    <option key={f} value={f}>
-                      {t(FIELD_LABEL[f])}
-                    </option>
-                  ))}
-                </select>
-                <div className="seg" role="group" aria-label={t('fund.period')}>
-                  {(['annual', 'quarterly'] as const).map((k) => (
-                    <button key={k} type="button" aria-pressed={k === periodKind} onClick={() => setPeriodKind(k)}>
-                      {t(k === 'annual' ? 'fund.annual' : 'fund.quarterly')}
-                    </button>
-                  ))}
-                </div>
+          <section className="space-y-3" aria-label={t('fund.multiplesTitle')}>
+            <h2 className="panel-header panel">{t('fund.multiplesTitle')}</h2>
+            <ChartGrid charts={multipleCharts} kind="line" />
+          </section>
+
+          <section className="space-y-3" aria-label={t('fund.financialsTitle')}>
+            <div className="panel panel-header flex-wrap">
+              <h2>{t('fund.financialsTitle')}</h2>
+              <div className="seg normal-case tracking-normal" role="group" aria-label={t('fund.period')}>
+                {(['annual', 'quarterly'] as const).map((k) => (
+                  <button key={k} type="button" aria-pressed={k === periodKind} onClick={() => setPeriodKind(k)}>
+                    {t(k === 'annual' ? 'fund.annual' : 'fund.quarterly')}
+                  </button>
+                ))}
               </div>
             </div>
-            <MetricChart series={financialSeries} kind="histogram" format={metricFormat} emptyText={t('fund.noData')} />
+            <ChartGrid charts={financialCharts} kind="histogram" />
           </section>
 
           <StatementsTable data={load.data} />

@@ -29,9 +29,11 @@ export interface MetricChartProps {
   format: (value: number) => string;
   /** Text shown instead of the chart when every series is empty. */
   emptyText: string;
+  /** Height in pixels; grids of small charts use less than the default. */
+  height?: number;
 }
 
-export default function MetricChart({ series, kind, format, emptyText }: MetricChartProps) {
+export default function MetricChart({ series, kind, format, emptyText, height = 280 }: MetricChartProps) {
   const { locale } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -94,7 +96,7 @@ export default function MetricChart({ series, kind, format, emptyText }: MetricC
   const legendTime = hoverTime ?? legend.reduce((t, { point }) => Math.max(t, point?.time ?? 0), 0);
 
   return (
-    <div className="relative h-[280px]">
+    <div className="relative" style={{ height }}>
       <div ref={containerRef} className="absolute inset-0" />
       {empty ? (
         <div className="absolute inset-0 flex items-center justify-center bg-terminal-panel text-xs text-terminal-faint">{emptyText}</div>
