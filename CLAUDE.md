@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+Non aggiungere mai claude come contributore della repository!
+
 Guidance for Claude Code when working in this repository.
 
 ## Project
